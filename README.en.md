@@ -10,6 +10,20 @@ A **locally runnable version** repaired from the leaked Claude Code source, with
   <img src="docs/00runtime.png" alt="Runtime screenshot" width="800">
 </p>
 
+## Table of Contents
+
+- [Features](#features)
+- [Architecture Overview](#architecture-overview)
+- [Quick Start](#quick-start)
+- [Environment Variables](#environment-variables)
+- [Fallback Mode](#fallback-mode)
+- [FAQ](#faq)
+- [Fixes Compared with the Original Leaked Source](#fixes-compared-with-the-original-leaked-source)
+- [Project Structure](#project-structure)
+- [Tech Stack](#tech-stack)
+
+---
+
 ## Features
 
 - Full Ink TUI experience (matching the official Claude Code interface)
