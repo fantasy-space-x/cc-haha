@@ -115,6 +115,27 @@ function ProviderSettings() {
         </Button>
       </div>
 
+      {/* Official provider — always visible at top */}
+      <div
+        className={`relative flex items-center gap-4 px-4 py-3.5 rounded-xl border transition-all mb-2 ${
+          isOfficialActive
+            ? 'border-[var(--color-brand)] bg-[var(--color-primary-fixed)]'
+            : 'border-[var(--color-border)] hover:border-[var(--color-border-focus)] cursor-pointer'
+        }`}
+        onClick={() => !isOfficialActive && handleActivateOfficial()}
+      >
+        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOfficialActive ? 'bg-[var(--color-success)]' : 'bg-[var(--color-text-tertiary)]'}`} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-[var(--color-text-primary)]">Claude Official</span>
+            {isOfficialActive && (
+              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--color-brand)] text-white leading-none">ACTIVE</span>
+            )}
+          </div>
+          <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">Anthropic native — no API key required</div>
+        </div>
+      </div>
+
       {/* Saved providers */}
       {isLoading && providers.length === 0 ? (
         <div className="flex justify-center py-8">
@@ -171,8 +192,10 @@ function ProviderSettings() {
         </div>
       )}
 
-      {/* Create Modal */}
-      <ProviderFormModal open={showCreateModal} onClose={() => setShowCreateModal(false)} mode="create" />
+      {/* Create Modal — conditionally rendered so state resets on close */}
+      {showCreateModal && (
+        <ProviderFormModal open={true} onClose={() => setShowCreateModal(false)} mode="create" />
+      )}
 
       {/* Edit Modal */}
       {editingProvider && (
@@ -195,7 +218,7 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
   const { createProvider, updateProvider, testConfig } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
 
-  const availablePresets = PROVIDER_PRESETS
+  const availablePresets = PROVIDER_PRESETS.filter((p) => p.id !== 'official')
   const initialPreset = provider ? availablePresets.find((p) => p.id === provider.presetId) || availablePresets.at(-1)! : availablePresets[0]
 
   const [selectedPreset, setSelectedPreset] = useState(initialPreset)
@@ -210,28 +233,23 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
   const [settingsJson, setSettingsJson] = useState('')
   const [settingsJsonError, setSettingsJsonError] = useState<string | null>(null)
 
-  // Load current settings.json and merge provider env (or show as-is for official)
+  // Load current settings.json and merge provider env vars
   useEffect(() => {
     import('../api/settings').then(({ settingsApi }) => {
       settingsApi.getUser().then((settings) => {
-        if (selectedPreset.id === 'official') {
-          // Official: show current settings as-is (env keys will be cleared on save)
-          setSettingsJson(JSON.stringify(settings, null, 2))
-        } else {
-          const merged = {
-            ...settings,
-            env: {
-              ...((settings.env as Record<string, string>) || {}),
-              ANTHROPIC_BASE_URL: baseUrl,
-              ANTHROPIC_AUTH_TOKEN: apiKey || '(your API key)',
-              ANTHROPIC_MODEL: models.main,
-              ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
-              ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
-              ANTHROPIC_DEFAULT_OPUS_MODEL: models.opus,
-            },
-          }
-          setSettingsJson(JSON.stringify(merged, null, 2))
+        const merged = {
+          ...settings,
+          env: {
+            ...((settings.env as Record<string, string>) || {}),
+            ANTHROPIC_BASE_URL: baseUrl,
+            ANTHROPIC_AUTH_TOKEN: apiKey || '(your API key)',
+            ANTHROPIC_MODEL: models.main,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: models.opus,
+          },
         }
+        setSettingsJson(JSON.stringify(merged, null, 2))
       }).catch(() => {
         setSettingsJson(JSON.stringify({}, null, 2))
       })
@@ -248,8 +266,7 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
   }
 
   const isCustom = selectedPreset.id === 'custom'
-  const isOfficial = selectedPreset.id === 'official'
-  const canSubmit = isOfficial || (name.trim() && baseUrl.trim() && (mode === 'edit' || apiKey.trim()) && models.main.trim() && !settingsJsonError)
+  const canSubmit = name.trim() && baseUrl.trim() && (mode === 'edit' || apiKey.trim()) && models.main.trim() && !settingsJsonError
 
   const handleSubmit = async () => {
     if (!canSubmit) return
@@ -264,17 +281,6 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
         } catch {
           // JSON validation already prevents this
         }
-      }
-
-      if (isOfficial) {
-        try {
-          await useProviderStore.getState().activateOfficial()
-          await fetchSettings()
-        } catch (err) {
-          console.error('Failed to activate official:', err)
-        }
-        onClose()
-        return
       }
 
       if (mode === 'create') {
@@ -367,54 +373,49 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
 
         <Input label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes..." />
 
-        {/* Non-official: Base URL, API Key, Model Mapping, Test */}
-        {!isOfficial && (
-          <>
-            {/* Base URL */}
-            {isCustom || mode === 'edit' ? (
-              <Input label="Base URL" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/anthropic" />
-            ) : (
-              <div>
-                <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">Base URL</label>
-                <div className="text-xs text-[var(--color-text-tertiary)] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)]">
-                  {baseUrl}
-                </div>
-              </div>
-            )}
-
-            <Input
-              label={mode === 'edit' ? 'API Key (leave blank to keep current)' : 'API Key'}
-              required={mode === 'create'}
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={mode === 'edit' ? '****' : 'sk-...'}
-            />
-
-            {/* Model Mapping */}
-            <div>
-              <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">Model Mapping</label>
-              <div className="grid grid-cols-2 gap-2">
-                <Input label="Main Model" required value={models.main} onChange={(e) => setModels({ ...models, main: e.target.value })} placeholder="Model ID" />
-                <Input label="Haiku Model" value={models.haiku} onChange={(e) => setModels({ ...models, haiku: e.target.value })} placeholder="Same as main" />
-                <Input label="Sonnet Model" value={models.sonnet} onChange={(e) => setModels({ ...models, sonnet: e.target.value })} placeholder="Same as main" />
-                <Input label="Opus Model" value={models.opus} onChange={(e) => setModels({ ...models, opus: e.target.value })} placeholder="Same as main" />
-              </div>
+        {/* Base URL */}
+        {isCustom || mode === 'edit' ? (
+          <Input label="Base URL" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://api.example.com/anthropic" />
+        ) : (
+          <div>
+            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">Base URL</label>
+            <div className="text-xs text-[var(--color-text-tertiary)] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)]">
+              {baseUrl}
             </div>
-
-            {/* Test connection */}
-            <div className="flex items-center gap-3">
-              <Button variant="secondary" size="sm" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim()}>
-                Test Connection
-              </Button>
-              {testResult && (
-                <span className={`text-xs ${testResult.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
-                  {testResult.success ? `Connected (${testResult.latencyMs}ms)` : `Failed: ${testResult.error}`}
-                </span>
-              )}
-            </div>
-          </>
+          </div>
         )}
+
+        <Input
+          label={mode === 'edit' ? 'API Key (leave blank to keep current)' : 'API Key'}
+          required={mode === 'create'}
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          placeholder={mode === 'edit' ? '****' : 'sk-...'}
+        />
+
+        {/* Model Mapping */}
+        <div>
+          <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">Model Mapping</label>
+          <div className="grid grid-cols-2 gap-2">
+            <Input label="Main Model" required value={models.main} onChange={(e) => setModels({ ...models, main: e.target.value })} placeholder="Model ID" />
+            <Input label="Haiku Model" value={models.haiku} onChange={(e) => setModels({ ...models, haiku: e.target.value })} placeholder="Same as main" />
+            <Input label="Sonnet Model" value={models.sonnet} onChange={(e) => setModels({ ...models, sonnet: e.target.value })} placeholder="Same as main" />
+            <Input label="Opus Model" value={models.opus} onChange={(e) => setModels({ ...models, opus: e.target.value })} placeholder="Same as main" />
+          </div>
+        </div>
+
+        {/* Test connection */}
+        <div className="flex items-center gap-3">
+          <Button variant="secondary" size="sm" onClick={handleTest} loading={isTesting} disabled={!baseUrl.trim() || !models.main.trim()}>
+            Test Connection
+          </Button>
+          {testResult && (
+            <span className={`text-xs ${testResult.success ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}`}>
+              {testResult.success ? `Connected (${testResult.latencyMs}ms)` : `Failed: ${testResult.error}`}
+            </span>
+          )}
+        </div>
 
         {/* Settings JSON — editable, shown for all presets including official */}
         <div>
