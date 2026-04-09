@@ -44,8 +44,8 @@ export const providersApi = {
     return api.post<{ ok: true }>('/api/providers/official')
   },
 
-  test(id: string) {
-    return api.post<TestResultResponse>(`/api/providers/${id}/test`)
+  test(id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) {
+    return api.post<TestResultResponse>(`/api/providers/${id}/test`, overrides)
   },
 
   testConfig(input: TestProviderConfigInput) {

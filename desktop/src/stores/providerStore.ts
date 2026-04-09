@@ -21,7 +21,7 @@ type ProviderStore = {
   deleteProvider: (id: string) => Promise<void>
   activateProvider: (id: string) => Promise<void>
   activateOfficial: () => Promise<void>
-  testProvider: (id: string) => Promise<ProviderTestResult>
+  testProvider: (id: string, overrides?: { baseUrl?: string; modelId?: string; apiFormat?: string }) => Promise<ProviderTestResult>
   testConfig: (input: TestProviderConfigInput) => Promise<ProviderTestResult>
 }
 
@@ -67,8 +67,8 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
     await get().fetchProviders()
   },
 
-  testProvider: async (id) => {
-    const { result } = await providersApi.test(id)
+  testProvider: async (id, overrides?) => {
+    const { result } = await providersApi.test(id, overrides)
     return result
   },
 

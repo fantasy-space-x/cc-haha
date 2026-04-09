@@ -9,6 +9,11 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { ApiError } from '../middleware/errorHandler.js'
+import { anthropicToOpenaiChat } from '../proxy/transform/anthropicToOpenaiChat.js'
+import { anthropicToOpenaiResponses } from '../proxy/transform/anthropicToOpenaiResponses.js'
+import { openaiChatToAnthropic } from '../proxy/transform/openaiChatToAnthropic.js'
+import { openaiResponsesToAnthropic } from '../proxy/transform/openaiResponsesToAnthropic.js'
+import type { AnthropicRequest, AnthropicResponse } from '../proxy/transform/types.js'
 import type {
   SavedProvider,
   ProvidersIndex,
@@ -16,6 +21,8 @@ import type {
   UpdateProviderInput,
   TestProviderInput,
   ProviderTestResult,
+  ProviderTestStepResult,
+  ApiFormat,
 } from '../types/provider.js'
 
 const MANAGED_ENV_KEYS = [
@@ -30,6 +37,15 @@ const MANAGED_ENV_KEYS = [
 const DEFAULT_INDEX: ProvidersIndex = { activeId: null, providers: [] }
 
 export class ProviderService {
+  private static serverPort = 3456
+
+  static setServerPort(port: number): void {
+    ProviderService.serverPort = port
+  }
+
+  static getServerPort(): number {
+    return ProviderService.serverPort
+  }
   private getConfigDir(): string {
     return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude')
   }
@@ -121,6 +137,7 @@ export class ProviderService {
       name: input.name,
       apiKey: input.apiKey,
       baseUrl: input.baseUrl,
+      apiFormat: input.apiFormat ?? 'anthropic',
       models: input.models,
       ...(input.notes !== undefined && { notes: input.notes }),
     }
@@ -141,6 +158,7 @@ export class ProviderService {
       ...(input.name !== undefined && { name: input.name }),
       ...(input.apiKey !== undefined && { apiKey: input.apiKey }),
       ...(input.baseUrl !== undefined && { baseUrl: input.baseUrl }),
+      ...(input.apiFormat !== undefined && { apiFormat: input.apiFormat }),
       ...(input.models !== undefined && { models: input.models }),
       ...(input.notes !== undefined && { notes: input.notes }),
     }
@@ -198,10 +216,15 @@ export class ProviderService {
     const settings = await this.readSettings()
     const existingEnv = (settings.env as Record<string, string>) || {}
 
+    const needsProxy = provider.apiFormat != null && provider.apiFormat !== 'anthropic'
+    const baseUrl = needsProxy
+      ? `http://127.0.0.1:${ProviderService.serverPort}/proxy`
+      : provider.baseUrl
+
     settings.env = {
       ...existingEnv,
-      ANTHROPIC_BASE_URL: provider.baseUrl,
-      ANTHROPIC_AUTH_TOKEN: provider.apiKey,
+      ANTHROPIC_BASE_URL: baseUrl,
+      ANTHROPIC_AUTH_TOKEN: needsProxy ? 'proxy-managed' : provider.apiKey,
       ANTHROPIC_MODEL: provider.models.main,
       ANTHROPIC_DEFAULT_HAIKU_MODEL: provider.models.haiku,
       ANTHROPIC_DEFAULT_SONNET_MODEL: provider.models.sonnet,
@@ -227,65 +250,239 @@ export class ProviderService {
     await this.writeSettings(settings)
   }
 
-  // --- Test ---
+  // --- Proxy support ---
 
-  async testProvider(id: string): Promise<ProviderTestResult> {
-    const provider = await this.getProvider(id)
-    if (!provider.baseUrl || !provider.apiKey) {
-      return { success: false, latencyMs: 0, error: 'Missing baseUrl or apiKey' }
-    }
-    return this.testProviderConfig({
+  async getActiveProviderForProxy(): Promise<{
+    baseUrl: string
+    apiKey: string
+    apiFormat: ApiFormat
+  } | null> {
+    const index = await this.readIndex()
+    if (!index.activeId) return null
+    const provider = index.providers.find((p) => p.id === index.activeId)
+    if (!provider) return null
+    return {
       baseUrl: provider.baseUrl,
       apiKey: provider.apiKey,
-      modelId: provider.models.main,
+      apiFormat: provider.apiFormat ?? 'anthropic',
+    }
+  }
+
+  // --- Test ---
+
+  async testProvider(
+    id: string,
+    overrides?: { baseUrl?: string; modelId?: string; apiFormat?: ApiFormat },
+  ): Promise<ProviderTestResult> {
+    const provider = await this.getProvider(id)
+    const baseUrl = overrides?.baseUrl || provider.baseUrl
+    const modelId = overrides?.modelId || provider.models.main
+    const apiFormat = overrides?.apiFormat ?? provider.apiFormat ?? 'anthropic'
+
+    if (!baseUrl || !provider.apiKey) {
+      return { connectivity: { success: false, latencyMs: 0, error: 'Missing baseUrl or apiKey' } }
+    }
+    return this.testProviderConfig({
+      baseUrl,
+      apiKey: provider.apiKey,
+      modelId,
+      apiFormat,
     })
   }
 
   async testProviderConfig(input: TestProviderInput): Promise<ProviderTestResult> {
-    const url = `${input.baseUrl.replace(/\/+$/, '')}/v1/messages`
-    const start = Date.now()
+    const format: ApiFormat = input.apiFormat ?? 'anthropic'
+    const base = input.baseUrl.replace(/\/+$/, '')
 
+    // ── Step 1: Basic connectivity ───────────────────────────
+    // Directly call the upstream API to verify URL, key, and model.
+    const step1 = await this.testConnectivity(base, input.apiKey, input.modelId, format)
+
+    // If connectivity failed, no point running step 2
+    if (!step1.success) {
+      return { connectivity: step1 }
+    }
+
+    // For native Anthropic format, no proxy pipeline to test
+    if (format === 'anthropic') {
+      return { connectivity: step1 }
+    }
+
+    // ── Step 2: Full proxy pipeline ──────────────────────────
+    // Anthropic request → transform → upstream → transform back → validate
+    const step2 = await this.testProxyPipeline(base, input.apiKey, input.modelId, format)
+
+    return { connectivity: step1, proxy: step2 }
+  }
+
+  /** Step 1: Direct upstream call to verify connectivity, auth, and model. */
+  private async testConnectivity(
+    base: string,
+    apiKey: string,
+    modelId: string,
+    format: ApiFormat,
+  ): Promise<ProviderTestStepResult> {
+    const start = Date.now()
     try {
+      const { url, headers, body } = buildDirectTestRequest(base, apiKey, modelId, format)
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': input.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: input.modelId,
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(15000),
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30000),
       })
 
       const latencyMs = Date.now() - start
+      const resBody = await response.json().catch(() => null) as Record<string, unknown> | null
 
-      if (response.ok) {
-        return { success: true, latencyMs, modelUsed: input.modelId, httpStatus: response.status }
-      }
-
-      let errorMessage = `HTTP ${response.status}`
-      try {
-        const body = (await response.json()) as Record<string, unknown>
-        if (body.error && typeof body.error === 'object') {
-          errorMessage = ((body.error as Record<string, unknown>).message as string) || errorMessage
-        } else if (typeof body.message === 'string') {
-          errorMessage = body.message
+      if (!response.ok) {
+        let error = `HTTP ${response.status}`
+        if (resBody?.error && typeof resBody.error === 'object') {
+          error = ((resBody.error as Record<string, unknown>).message as string) || error
         }
-      } catch {
-        errorMessage = `HTTP ${response.status} ${response.statusText}`
+        return { success: false, latencyMs, error, modelUsed: modelId, httpStatus: response.status }
       }
 
-      return { success: false, latencyMs, error: errorMessage, modelUsed: input.modelId, httpStatus: response.status }
+      // Validate response structure
+      const valid = validateResponseBody(resBody, format)
+      if (!valid.ok) {
+        return { success: false, latencyMs, error: valid.error, modelUsed: modelId, httpStatus: response.status }
+      }
+
+      return { success: true, latencyMs, modelUsed: valid.model || modelId, httpStatus: response.status }
     } catch (err: unknown) {
       const latencyMs = Date.now() - start
       if (err instanceof DOMException && err.name === 'TimeoutError') {
-        return { success: false, latencyMs, error: 'Request timed out after 15 seconds', modelUsed: input.modelId }
+        return { success: false, latencyMs, error: 'Request timed out (30s)', modelUsed: modelId }
       }
-      return { success: false, latencyMs, error: err instanceof Error ? err.message : String(err), modelUsed: input.modelId }
+      return { success: false, latencyMs, error: err instanceof Error ? err.message : String(err), modelUsed: modelId }
+    }
+  }
+
+  /** Step 2: Full proxy pipeline — Anthropic → transform → upstream → transform back → validate. */
+  private async testProxyPipeline(
+    base: string,
+    apiKey: string,
+    modelId: string,
+    format: 'openai_chat' | 'openai_responses',
+  ): Promise<ProviderTestStepResult> {
+    const start = Date.now()
+    try {
+      // Build an Anthropic Messages API request (same shape as what CLI sends)
+      const anthropicReq: AnthropicRequest = {
+        model: modelId,
+        max_tokens: 64,
+        messages: [{ role: 'user', content: 'Say "ok" and nothing else.' }],
+      }
+
+      // Transform to OpenAI format
+      let upstreamUrl: string
+      let transformedBody: unknown
+      if (format === 'openai_chat') {
+        transformedBody = anthropicToOpenaiChat(anthropicReq)
+        upstreamUrl = `${base}/v1/chat/completions`
+      } else {
+        transformedBody = anthropicToOpenaiResponses(anthropicReq)
+        upstreamUrl = `${base}/v1/responses`
+      }
+
+      // Call upstream with transformed request
+      const response = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify(transformedBody),
+        signal: AbortSignal.timeout(30000),
+      })
+
+      if (!response.ok) {
+        const latencyMs = Date.now() - start
+        const errText = await response.text().catch(() => '')
+        return { success: false, latencyMs, modelUsed: modelId, httpStatus: response.status,
+          error: `Upstream HTTP ${response.status}: ${errText.slice(0, 200)}` }
+      }
+
+      // Transform response back to Anthropic format
+      const responseBody = await response.json()
+      const anthropicRes = format === 'openai_chat'
+        ? openaiChatToAnthropic(responseBody, modelId)
+        : openaiResponsesToAnthropic(responseBody, modelId)
+
+      const latencyMs = Date.now() - start
+
+      // Validate the final Anthropic response
+      if (anthropicRes.type !== 'message' || !Array.isArray(anthropicRes.content)) {
+        return { success: false, latencyMs, modelUsed: modelId,
+          error: 'Proxy transform produced invalid Anthropic response' }
+      }
+
+      return { success: true, latencyMs, modelUsed: anthropicRes.model || modelId, httpStatus: response.status }
+    } catch (err: unknown) {
+      const latencyMs = Date.now() - start
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        return { success: false, latencyMs, error: 'Proxy pipeline timed out (30s)', modelUsed: modelId }
+      }
+      return { success: false, latencyMs, error: err instanceof Error ? err.message : String(err), modelUsed: modelId }
     }
   }
 }
+
+// ─── Helpers ───────────────────────────────────────────────
+
+function buildDirectTestRequest(
+  base: string,
+  apiKey: string,
+  modelId: string,
+  format: ApiFormat,
+): { url: string; headers: Record<string, string>; body: Record<string, unknown> } {
+  const prompt = 'Say "ok" and nothing else.'
+
+  if (format === 'openai_chat') {
+    return {
+      url: `${base}/v1/chat/completions`,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: { model: modelId, max_tokens: 16, messages: [{ role: 'user', content: prompt }] },
+    }
+  }
+  if (format === 'openai_responses') {
+    return {
+      url: `${base}/v1/responses`,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: { model: modelId, max_output_tokens: 16, input: [{ type: 'message', role: 'user', content: prompt }] },
+    }
+  }
+  // anthropic
+  return {
+    url: `${base}/v1/messages`,
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: { model: modelId, max_tokens: 16, messages: [{ role: 'user', content: prompt }] },
+  }
+}
+
+function validateResponseBody(
+  body: Record<string, unknown> | null,
+  format: ApiFormat,
+): { ok: true; model?: string } | { ok: false; error: string } {
+  if (!body) return { ok: false, error: 'Empty response — not a valid API endpoint' }
+  if (body.error && typeof body.error === 'object') {
+    return { ok: false, error: ((body.error as Record<string, unknown>).message as string) || 'Error in response body' }
+  }
+
+  if (format === 'openai_chat') {
+    if (!Array.isArray(body.choices) || body.choices.length === 0) {
+      return { ok: false, error: 'Response missing choices — not a valid Chat Completions endpoint' }
+    }
+    return { ok: true, model: (body.model as string) || undefined }
+  }
+  if (format === 'openai_responses') {
+    if (!Array.isArray(body.output)) {
+      return { ok: false, error: 'Response missing output — not a valid Responses API endpoint' }
+    }
+    return { ok: true, model: (body.model as string) || undefined }
+  }
+  // anthropic
+  if (body.type !== 'message' || !Array.isArray(body.content)) {
+    return { ok: false, error: 'Not a valid Anthropic Messages endpoint' }
+  }
+  return { ok: true, model: (body.model as string) || undefined }
+}
+

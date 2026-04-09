@@ -59,6 +59,10 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.officialDesc': 'Anthropic 原生接入 — 无需 API 密钥',
   'settings.providers.connected': '已连接 ({latency}ms)',
   'settings.providers.failed': '失败: {error}',
+  'settings.providers.connectivityOk': '① 连通 ({latency}ms)',
+  'settings.providers.connectivityFailed': '① 连通失败: {error}',
+  'settings.providers.proxyOk': '② 代理转换 ({latency}ms)',
+  'settings.providers.proxyFailed': '② 代理转换失败: {error}',
   'settings.providers.confirmDelete': '删除服务商 "{name}"？此操作不可撤销。',
   'settings.providers.activate': '激活',
   'settings.providers.test': '测试',
@@ -85,6 +89,11 @@ export const zh: Record<TranslationKey, string> = {
   'settings.providers.settingsJson': '设置 JSON',
   'settings.providers.settingsJsonDesc': '~/.claude/settings.json — 直接编辑，保存时写入。',
   'settings.providers.jsonError': 'JSON 语法错误: {error}',
+  'settings.providers.apiFormat': 'API 格式',
+  'settings.providers.apiFormatAnthropic': 'Anthropic Messages (原生)',
+  'settings.providers.apiFormatOpenaiChat': 'OpenAI Chat Completions (代理转换)',
+  'settings.providers.apiFormatOpenaiResponses': 'OpenAI Responses API (代理转换)',
+  'settings.providers.proxyHint': '请求将通过本地代理转换协议格式',
 
   // Settings > Permissions
   'settings.permissions.title': '权限模式',

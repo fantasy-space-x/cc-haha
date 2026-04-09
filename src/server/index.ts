@@ -11,6 +11,8 @@ import { corsHeaders } from './middleware/cors.js'
 import { requireAuth } from './middleware/auth.js'
 import { teamWatcher } from './services/teamWatcher.js'
 import { cronScheduler } from './services/cronScheduler.js'
+import { handleProxyRequest } from './proxy/handler.js'
+import { ProviderService } from './services/providerService.js'
 
 function readArgValue(flag: string): string | undefined {
   const args = process.argv.slice(2)
@@ -42,6 +44,7 @@ const PORT = SERVER_OPTIONS.port
 const HOST = SERVER_OPTIONS.host
 
 export function startServer(port = PORT, host = HOST) {
+  ProviderService.setServerPort(port)
   const localConnectHost =
     host === '0.0.0.0' || host === '127.0.0.1' || host === 'localhost'
       ? '127.0.0.1'
@@ -155,6 +158,37 @@ export function startServer(port = PORT, host = HOST) {
           return Response.json(
             { error: 'Internal server error' },
             { status: 500, headers: corsHeaders() }
+          )
+        }
+      }
+
+      // Proxy — protocol-translating reverse proxy for OpenAI-compatible APIs
+      if (url.pathname.startsWith('/proxy/')) {
+        if (authRequired) {
+          const authError = requireAuth(req)
+          if (authError) {
+            const headers = new Headers(authError.headers)
+            for (const [key, value] of Object.entries(corsHeaders(origin))) {
+              headers.set(key, value)
+            }
+            return new Response(authError.body, { status: authError.status, headers })
+          }
+        }
+        try {
+          const response = await handleProxyRequest(req, url)
+          const headers = new Headers(response.headers)
+          for (const [key, value] of Object.entries(corsHeaders(origin))) {
+            headers.set(key, value)
+          }
+          return new Response(response.body, {
+            status: response.status,
+            headers,
+          })
+        } catch (error) {
+          console.error('[Server] Proxy error:', error)
+          return Response.json(
+            { type: 'error', error: { type: 'api_error', message: 'Internal proxy error' } },
+            { status: 500, headers: corsHeaders() },
           )
         }
       }

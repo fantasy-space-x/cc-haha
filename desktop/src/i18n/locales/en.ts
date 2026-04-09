@@ -57,6 +57,10 @@ export const en = {
   'settings.providers.officialDesc': 'Anthropic native — no API key required',
   'settings.providers.connected': 'Connected ({latency}ms)',
   'settings.providers.failed': 'Failed: {error}',
+  'settings.providers.connectivityOk': '① Connectivity ({latency}ms)',
+  'settings.providers.connectivityFailed': '① Connectivity failed: {error}',
+  'settings.providers.proxyOk': '② Proxy pipeline ({latency}ms)',
+  'settings.providers.proxyFailed': '② Proxy failed: {error}',
   'settings.providers.confirmDelete': 'Delete provider "{name}"? This cannot be undone.',
   'settings.providers.activate': 'Activate',
   'settings.providers.test': 'Test',
@@ -83,6 +87,11 @@ export const en = {
   'settings.providers.settingsJson': 'Settings JSON',
   'settings.providers.settingsJsonDesc': '~/.claude/settings.json — edit directly, will be written on save.',
   'settings.providers.jsonError': 'JSON syntax error: {error}',
+  'settings.providers.apiFormat': 'API Format',
+  'settings.providers.apiFormatAnthropic': 'Anthropic Messages (native)',
+  'settings.providers.apiFormatOpenaiChat': 'OpenAI Chat Completions (proxy)',
+  'settings.providers.apiFormatOpenaiResponses': 'OpenAI Responses API (proxy)',
+  'settings.providers.proxyHint': 'Requests will be translated via the local proxy',
 
   // Settings > Permissions
   'settings.permissions.title': 'Permission Mode',
