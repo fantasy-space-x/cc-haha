@@ -40,7 +40,7 @@ describe('chat blocks', () => {
 
     fireEvent.click(screen.getByRole('button'))
 
-    expect(container.textContent).not.toContain('Tool Input')
+    expect(container.textContent).toContain('Tool Input')
     expect(container.textContent).not.toContain('const answer = 42')
   })
 
@@ -60,6 +60,27 @@ describe('chat blocks', () => {
 
     expect(container.textContent).toContain('ls -la')
     expect(container.textContent).not.toContain('file-a')
+  })
+
+  it('expands tool errors so full Computer Use gate messages are readable', () => {
+    const { container } = render(
+      <ToolCallBlock
+        toolName="mcp__computer-use__left_click"
+        input={{ coordinate: [120, 220] }}
+        result={{
+          content: '"Claude Code Haha" is not in the allowed applications and is currently in front. Take a new screenshot — it may have appeared since your last one.',
+          isError: true,
+        }}
+      />,
+    )
+
+    expect(container.textContent).toContain('mcp__computer-use__left_click')
+    expect(container.textContent).not.toContain('Take a new screenshot')
+
+    fireEvent.click(screen.getByRole('button'))
+
+    expect(container.textContent).toContain('Take a new screenshot')
+    expect(container.textContent).toContain('allowed applications')
   })
 
   it('shows a diff preview for edit permission requests', () => {
@@ -83,6 +104,7 @@ describe('chat blocks', () => {
               new_string: 'const count = 2',
             },
           },
+          pendingComputerUsePermission: null,
           tokenUsage: { input_tokens: 0, output_tokens: 0 },
           elapsedSeconds: 0,
           statusVerb: '',

@@ -12,6 +12,8 @@ import { access, readFile, mkdir, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import type { CuPermissionRequest } from '../../vendor/computer-use-mcp/types.js'
+import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 // Embed helper scripts at compile time so they're available in bundled mode
 // @ts-ignore — Bun text import
 import MAC_HELPER_CONTENT from '../../../runtime/mac_helper.py' with { type: 'text' }
@@ -345,6 +347,11 @@ type ComputerUseConfig = {
   }
 }
 
+type RequestAccessBody = {
+  sessionId?: string
+  request?: CuPermissionRequest
+}
+
 const DEFAULT_CONFIG: ComputerUseConfig = {
   authorizedApps: [],
   grantFlags: { clipboardRead: true, clipboardWrite: true, systemKeyCombos: true },
@@ -451,6 +458,29 @@ export async function handleComputerUseApi(
       return Response.json({ error: 'Unsupported platform' }, { status: 400 })
     }
     return Response.json({ ok: true })
+  }
+
+  if (action === 'request-access' && req.method === 'POST') {
+    try {
+      const body = (await req.json()) as RequestAccessBody
+      if (!body.sessionId || !body.request?.requestId) {
+        return Response.json(
+          { error: 'BAD_REQUEST', message: 'sessionId and request are required' },
+          { status: 400 },
+        )
+      }
+
+      const response = await computerUseApprovalService.requestApproval(
+        body.sessionId,
+        body.request,
+      )
+      return Response.json(response)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Computer Use approval failed'
+      const status = message.includes('not connected') ? 409 : 500
+      return Response.json({ error: 'COMPUTER_USE_APPROVAL_FAILED', message }, { status })
+    }
   }
 
   return Response.json(

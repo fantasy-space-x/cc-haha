@@ -13,6 +13,7 @@ import {
   ConversationStartupError,
   conversationService,
 } from '../services/conversationService.js'
+import { computerUseApprovalService } from '../services/computerUseApprovalService.js'
 import { sessionService } from '../services/sessionService.js'
 import { SettingsService } from '../services/settingsService.js'
 import { ProviderService } from '../services/providerService.js'
@@ -118,6 +119,10 @@ export const handleWebSocket = {
           handlePermissionResponse(ws, message)
           break
 
+        case 'computer_use_permission_response':
+          handleComputerUsePermissionResponse(ws, message)
+          break
+
         case 'set_permission_mode':
           handleSetPermissionMode(ws, message)
           break
@@ -148,6 +153,7 @@ export const handleWebSocket = {
     }
 
     console.log(`[WS] Client disconnected from session: ${sessionId} (${code}: ${reason})`)
+    computerUseApprovalService.cancelSession(sessionId)
     activeSessions.delete(sessionId)
     cleanupStreamState(sessionId)
     sessionSlashCommands.delete(sessionId)
@@ -298,6 +304,22 @@ function handlePermissionResponse(
     message.rule,
   )
   console.log(`[WS] Permission response for ${message.requestId}: ${message.allowed}`)
+}
+
+function handleComputerUsePermissionResponse(
+  ws: ServerWebSocket<WebSocketData>,
+  message: Extract<ClientMessage, { type: 'computer_use_permission_response' }>
+) {
+  const { sessionId } = ws.data
+  const ok = computerUseApprovalService.resolveApproval(
+    message.requestId,
+    message.response,
+  )
+  if (!ok) {
+    console.warn(
+      `[WS] Ignored Computer Use permission response for unknown request ${message.requestId} from ${sessionId}`
+    )
+  }
 }
 
 function handleSetPermissionMode(

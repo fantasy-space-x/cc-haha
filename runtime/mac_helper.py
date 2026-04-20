@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import ctypes
 import json
 import os
 import subprocess
@@ -173,6 +174,33 @@ def run_osascript(script: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "osascript failed")
     return result.stdout.strip()
+
+
+def applescript_modifier(name: str) -> str:
+    if name == "command":
+        return "command down"
+    if name == "option":
+        return "option down"
+    if name == "shift":
+        return "shift down"
+    if name == "ctrl":
+        return "control down"
+    if name == "fn":
+        return "fn down"
+    raise ValueError(f"Unsupported AppleScript modifier: {name}")
+
+
+def send_keystroke_via_osascript(character: str, modifiers: list[str] | None = None) -> None:
+    escaped = character.replace("\\", "\\\\").replace('"', '\\"')
+    if modifiers:
+        modifier_expr = ", ".join(applescript_modifier(m) for m in modifiers)
+        script = (
+            'tell application "System Events" to keystroke '
+            f'"{escaped}" using {{{modifier_expr}}}'
+        )
+    else:
+        script = f'tell application "System Events" to keystroke "{escaped}"'
+    run_osascript(script)
 
 
 def get_displays() -> list[dict[str, Any]]:
@@ -472,6 +500,10 @@ def write_clipboard(text: str) -> None:
     pb.setString_forType_(text, NSPasteboardTypeString)
 
 
+def paste_clipboard() -> None:
+    send_keystroke_via_osascript("v", ["command"])
+
+
 def detect_screen_recording_permission() -> bool | None:
     """Best-effort passive screen-recording probe with no system prompt.
 
@@ -520,12 +552,29 @@ def detect_screen_recording_permission() -> bool | None:
     return None
 
 
-def check_permissions() -> dict[str, bool | None]:
-    accessibility = True
+def detect_accessibility_permission() -> bool:
+    """
+    Use the official macOS Accessibility trust API.
+
+    The previous System Events / AppleScript probe was too weak: it could
+    succeed even when the current helper process was not actually trusted for
+    input control, which led the desktop UI to report Accessibility as granted
+    while mouse/keyboard control still failed at runtime.
+    """
+    framework_path = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
     try:
-        run_osascript('tell application "System Events" to get name of first process')
+        application_services = ctypes.CDLL(framework_path)
+        application_services.AXIsProcessTrusted.restype = ctypes.c_bool
+        application_services.AXIsProcessTrusted.argtypes = []
+        return bool(application_services.AXIsProcessTrusted())
     except Exception:
-        accessibility = False
+        # Fail closed: if the trust API can't be queried, treat accessibility
+        # as unavailable instead of reporting a misleading success state.
+        return False
+
+
+def check_permissions() -> dict[str, bool | None]:
+    accessibility = detect_accessibility_permission()
     screen_recording = detect_screen_recording_permission()
     return {
         "accessibility": accessibility,
@@ -559,7 +608,15 @@ def scroll(x: int, y: int, delta_x: int, delta_y: int) -> None:
 def key_action(sequence: str, repeat: int = 1) -> None:
     parts = [normalize_key(part) for part in sequence.split("+") if part.strip()]
     for _ in range(max(1, repeat)):
-        if len(parts) == 1:
+        if parts == ["command", "v"]:
+            paste_clipboard()
+        elif parts == ["command", "a"]:
+            send_keystroke_via_osascript("a", ["command"])
+        elif parts == ["command", "c"]:
+            send_keystroke_via_osascript("c", ["command"])
+        elif parts == ["command", "x"]:
+            send_keystroke_via_osascript("x", ["command"])
+        elif len(parts) == 1:
             pyautogui.press(parts[0])
         else:
             pyautogui.hotkey(*parts, interval=0.02)
@@ -701,6 +758,10 @@ def main() -> int:
             return 0
         if command == "write_clipboard":
             write_clipboard(str(payload.get("text") or ""))
+            json_output({"ok": True, "result": True})
+            return 0
+        if command == "paste_clipboard":
+            paste_clipboard()
             json_output({"ok": True, "result": True})
             return 0
         error_output(f"Unknown command: {command}", code="bad_command")

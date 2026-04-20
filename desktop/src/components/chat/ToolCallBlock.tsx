@@ -41,7 +41,8 @@ export function ToolCallBlock({ toolName, input, result, compact = false }: Prop
 
   const preview = useMemo(() => renderPreview(toolName, obj, result, t), [obj, result, toolName, t])
   const details = useMemo(() => renderDetails(toolName, obj, t), [obj, toolName, t])
-  const expandable = toolName === 'Edit' || toolName === 'Write'
+  const hasResultDetails = Boolean(result && extractTextContent(result.content))
+  const expandable = toolName === 'Edit' || toolName === 'Write' || hasResultDetails
 
   return (
     <div className={`overflow-hidden rounded-lg border border-[var(--color-border)]/50 bg-[var(--color-surface-container-lowest)] ${
@@ -76,7 +77,7 @@ export function ToolCallBlock({ toolName, input, result, compact = false }: Prop
             {outputSummary}
           </span>
         )}
-        {result?.isError && (
+          {result?.isError && (
           <span className="material-symbols-outlined shrink-0 text-[14px] text-[var(--color-error)]">error</span>
         )}
         {expandable && (

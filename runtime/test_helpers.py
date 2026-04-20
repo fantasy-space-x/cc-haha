@@ -154,7 +154,7 @@ class TestJSONProtocol(unittest.TestCase):
             "move_mouse", "scroll", "mouse_down", "mouse_up",
             "cursor_position", "frontmost_app", "app_under_point",
             "list_installed_apps", "list_running_apps", "open_app",
-            "read_clipboard", "write_clipboard",
+            "read_clipboard", "write_clipboard", "paste_clipboard",
         }
         for helper in [MAC_HELPER, WIN_HELPER]:
             if not helper.exists():
@@ -247,6 +247,42 @@ class TestWinHelperPermissions(unittest.TestCase):
         self.assertIn('"screenRecording": True', func_source)
 
 
+class TestMacHelperPermissions(unittest.TestCase):
+    """macOS helper permission detection should use the official trust API."""
+
+    def test_check_permissions_uses_ax_api_instead_of_system_events(self):
+        if not MAC_HELPER.exists():
+            self.skipTest("mac_helper.py not found")
+
+        source = MAC_HELPER.read_text()
+
+        self.assertIn("def detect_accessibility_permission()", source)
+        self.assertIn("AXIsProcessTrusted", source)
+
+        start = source.index("def check_permissions()")
+        rest = source[start:]
+        lines = rest.split("\n")
+        func_lines = [lines[0]]
+        for line in lines[1:]:
+            if line and not line[0].isspace() and not line.startswith("#"):
+                break
+            func_lines.append(line)
+        func_source = "\n".join(func_lines)
+
+        self.assertIn("detect_accessibility_permission()", func_source)
+        self.assertNotIn('tell application "System Events"', func_source)
+
+    def test_clipboard_shortcuts_use_osascript_path(self):
+        if not MAC_HELPER.exists():
+            self.skipTest("mac_helper.py not found")
+
+        source = MAC_HELPER.read_text()
+        self.assertIn("def paste_clipboard()", source)
+        self.assertIn('send_keystroke_via_osascript("v", ["command"])', source)
+        self.assertIn('if parts == ["command", "v"]:', source)
+        self.assertIn('elif parts == ["command", "a"]:', source)
+
+
 class TestCrossPlatformFunctions(unittest.TestCase):
     """Test functions that are identical between both helpers."""
 
@@ -275,7 +311,7 @@ class TestCrossPlatformFunctions(unittest.TestCase):
         """Input action functions (click, scroll, etc.) should be identical."""
         if not MAC_HELPER.exists() or not WIN_HELPER.exists():
             self.skipTest("Both helpers required")
-        for func in ["click", "scroll", "key_action", "hold_keys", "type_text"]:
+        for func in ["click", "scroll", "hold_keys", "type_text"]:
             mac_src = self._get_function_body(MAC_HELPER, func)
             win_src = self._get_function_body(WIN_HELPER, func)
             self.assertEqual(mac_src, win_src,

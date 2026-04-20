@@ -146,6 +146,19 @@ describe('ConversationService', () => {
     expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
   })
 
+  test('buildChildEnv injects desktop Computer Use host bundle id for sdk sessions', async () => {
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv(
+      '/tmp',
+      'ws://127.0.0.1:3456/sdk/test-session?token=test-token',
+    )) as Record<string, string>
+
+    expect(env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID).toBe(
+      'com.claude-code-haha.desktop',
+    )
+    expect(env.CC_HAHA_DESKTOP_SERVER_URL).toBe('http://127.0.0.1:3456')
+  })
+
   test('uses bun entrypoint fallback on Windows dev mode', () => {
     const service = new ConversationService() as any
     const args = service.resolveCliArgs(['--print'])

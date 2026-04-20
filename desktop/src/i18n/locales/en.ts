@@ -331,6 +331,28 @@ export const en = {
   'permission.showFullInput': 'Show full input',
   'permission.replacingContent': 'Replacing content in file',
 
+  // ─── Computer Use Approval ──────────────────────────────────────
+  'computerUseApproval.titleApps': 'Computer Use wants to control these apps',
+  'computerUseApproval.titleTcc': 'Computer Use needs macOS permissions',
+  'computerUseApproval.reason': 'Why Claude is asking',
+  'computerUseApproval.allow': 'Allow for session',
+  'computerUseApproval.deny': 'Deny',
+  'computerUseApproval.alreadyGranted': 'Already granted for this session',
+  'computerUseApproval.notInstalled': 'App not installed',
+  'computerUseApproval.sensitiveApp': 'This app is treated as sensitive and deserves extra review.',
+  'computerUseApproval.alsoRequested': 'Also requested',
+  'computerUseApproval.hideWhileWorking': '{count} other apps will be hidden while Claude works.',
+  'computerUseApproval.hideWhileWorkingRestore': '{count} other apps will be hidden while Claude works, then restored when Claude is done.',
+  'computerUseApproval.accessibility': 'Accessibility',
+  'computerUseApproval.screenRecording': 'Screen Recording',
+  'computerUseApproval.granted': 'Granted',
+  'computerUseApproval.notGranted': 'Not granted',
+  'computerUseApproval.openAccessibility': 'Open Accessibility',
+  'computerUseApproval.openScreenRecording': 'Open Screen Recording',
+  'computerUseApproval.tryAgain': 'Try again',
+  'computerUseApproval.tccHint': 'Grant the missing permissions in System Settings, then come back and choose "Try again".',
+  'computerUseApproval.tryAgainHint': 'Try again returns control to Claude so it can call request_access once more after macOS permission changes take effect.',
+
   // ─── Ask User Question ──────────────────────────────────────
   'question.needsInput': 'Claude needs your input',
   'question.answered': 'Answered',

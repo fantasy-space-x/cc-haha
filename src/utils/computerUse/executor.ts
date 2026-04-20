@@ -15,13 +15,14 @@ import type {
   ScreenshotResult,
 } from '../../vendor/computer-use-mcp/index.js'
 import { API_RESIZE_PARAMS, targetImageSize } from '../../vendor/computer-use-mcp/index.js'
-import { execFileNoThrow } from '../execFileNoThrow.js'
 import { sleep } from '../sleep.js'
 import { CLI_CU_CAPABILITIES, CLI_HOST_BUNDLE_ID } from './common.js'
 import { callPythonHelper } from './pythonBridge.js'
 
 const SCREENSHOT_JPEG_QUALITY = 0.75
 const MOVE_SETTLE_MS = 50
+const hostBundleId =
+  process.env.CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID || CLI_HOST_BUNDLE_ID
 
 type PythonDisplayGeometry = DisplayGeometry
 
@@ -48,14 +49,11 @@ function normalizeDisplayGeometry(display: PythonDisplayGeometry): DisplayGeomet
 }
 
 async function readClipboardViaPbpaste(): Promise<string> {
-  const { stdout, code } = await execFileNoThrow('pbpaste', [], { useCwd: false })
-  if (code !== 0) throw new Error(`pbpaste exited with code ${code}`)
-  return stdout
+  return callPythonHelper<string>('read_clipboard', {})
 }
 
 async function writeClipboardViaPbcopy(text: string): Promise<void> {
-  const { code } = await execFileNoThrow('pbcopy', [], { input: text, useCwd: false })
-  if (code !== 0) throw new Error(`pbcopy exited with code ${code}`)
+  await callPythonHelper('write_clipboard', { text })
 }
 
 async function typeViaClipboard(text: string): Promise<void> {
@@ -66,8 +64,11 @@ async function typeViaClipboard(text: string): Promise<void> {
 
   try {
     await writeClipboardViaPbcopy(text)
-    await callPythonHelper('key', { keySequence: 'command+v', repeat: 1 })
-    await sleep(100)
+    // Give NSPasteboard a beat before paste, then keep the new contents
+    // resident long enough for Electron/WebView fields to consume them.
+    await sleep(40)
+    await callPythonHelper('paste_clipboard', {})
+    await sleep(180)
   } finally {
     if (typeof saved === 'string') {
       try {
@@ -88,7 +89,7 @@ export function createCliExecutor(_opts: {
   return {
     capabilities: {
       ...CLI_CU_CAPABILITIES,
-      hostBundleId: CLI_HOST_BUNDLE_ID,
+      hostBundleId,
     },
 
     async prepareForAction(): Promise<string[]> {

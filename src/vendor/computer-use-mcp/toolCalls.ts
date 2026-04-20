@@ -2433,9 +2433,11 @@ async function handleType(
   // IME/input-source state can corrupt keystroke-by-keystroke typing even for
   // plain ASCII. The save/restore + read-back-verify lives in the EXECUTOR,
   // not here. Here we just route.
+  const hasNonControlText = /[^\r\n\t]/u.test(text);
   const viaClipboard =
     (text.includes("\n") ||
-      (adapter.executor.capabilities.platform === "darwin" && text.length > 1)) &&
+      (adapter.executor.capabilities.platform === "darwin" &&
+        hasNonControlText)) &&
     overrides.grantFlags.clipboardWrite &&
     subGates.clipboardPasteMultiline;
 

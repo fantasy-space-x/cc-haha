@@ -119,7 +119,7 @@ export class ConversationService {
     // 工作目录就变成 `/`。把 CALLER_DIR / PWD 显式覆盖成 workDir，preload.ts
     // chdir 后落到正确目录。
     //
-    const childEnv = await this.buildChildEnv(workDir)
+    const childEnv = await this.buildChildEnv(workDir, sdkUrl)
 
     let proc: ReturnType<typeof Bun.spawn>
     try {
@@ -471,7 +471,10 @@ export class ConversationService {
     return args
   }
 
-  private async buildChildEnv(workDir: string): Promise<Record<string, string>> {
+  private async buildChildEnv(
+    workDir: string,
+    sdkUrl?: string,
+  ): Promise<Record<string, string>> {
     // Provider isolation: when Desktop has its own provider config/index,
     // strip inherited provider env vars so the child CLI reads fresh values
     // from ~/.claude/cc-haha/settings.json instead of stale process.env.
@@ -497,11 +500,27 @@ export class ConversationService {
       }
     }
 
+    let desktopServerUrl: string | undefined
+    if (sdkUrl) {
+      try {
+        const parsed = new URL(sdkUrl)
+        desktopServerUrl = `http://${parsed.host}`
+      } catch {
+        desktopServerUrl = undefined
+      }
+    }
+
     return {
       ...cleanEnv,
       CLAUDE_CODE_ENABLE_TASKS: '1',
       CALLER_DIR: workDir,
       PWD: workDir,
+      ...(sdkUrl
+        ? { CC_HAHA_COMPUTER_USE_HOST_BUNDLE_ID: 'com.claude-code-haha.desktop' }
+        : {}),
+      ...(desktopServerUrl
+        ? { CC_HAHA_DESKTOP_SERVER_URL: desktopServerUrl }
+        : {}),
       // Tell the CLI entrypoint to skip project .env loading. Provider env
       // should come from Desktop-managed config or inherited launch env, not
       // be reintroduced from the repo's .env file.

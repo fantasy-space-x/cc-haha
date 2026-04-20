@@ -513,6 +513,10 @@ def write_clipboard(text: str) -> None:
     pyperclip.copy(text)
 
 
+def paste_clipboard() -> None:
+    pyautogui.hotkey("ctrl", "v", interval=0.02)
+
+
 # ---------------------------------------------------------------------------
 # Permissions — Windows doesn't have macOS-style TCC
 # ---------------------------------------------------------------------------
@@ -702,6 +706,10 @@ def main() -> int:
             return 0
         if command == "write_clipboard":
             write_clipboard(str(payload.get("text") or ""))
+            json_output({"ok": True, "result": True})
+            return 0
+        if command == "paste_clipboard":
+            paste_clipboard()
             json_output({"ok": True, "result": True})
             return 0
         error_output(f"Unknown command: {command}", code="bad_command")

@@ -51,6 +51,7 @@ type Binding = {
  */
 let binding: Binding | undefined;
 let currentToolUseContext: ToolUseContext | undefined;
+const desktopServerUrl = process.env.CC_HAHA_DESKTOP_SERVER_URL;
 function tuc(): ToolUseContext {
   // Safe: `binding` is only populated when `currentToolUseContext` is set.
   // Called only from within `ctx` callbacks, which only fire during dispatch.
@@ -230,6 +231,37 @@ export function buildSessionContext(): ComputerUseSessionContext {
     formatLockHeldMessage: formatLockHeld
   };
 }
+
+async function runDesktopPermissionDialog(
+  req: CuPermissionRequest,
+  signal: AbortSignal,
+): Promise<CuPermissionResponse> {
+  if (!desktopServerUrl) {
+    throw new Error('Desktop server URL is not configured')
+  }
+
+  const response = await fetch(`${desktopServerUrl}/api/computer-use/request-access`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sessionId: getSessionId(),
+      request: req
+    }),
+    signal
+  })
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '')
+    throw new Error(
+      `Desktop Computer Use approval failed (${response.status}): ${message || response.statusText}`,
+    )
+  }
+
+  return await response.json() as CuPermissionResponse
+}
+
 /**
  * Load pre-authorized apps from ~/.claude/cc-haha/computer-use-config.json.
  * Called once when the binding is first created. Pre-authorized apps
@@ -362,8 +394,20 @@ export function getComputerUseMCPToolOverrides(toolName: string): ComputerUseMCP
  */
 async function runPermissionDialog(req: CuPermissionRequest): Promise<CuPermissionResponse> {
   const context = tuc();
+  let desktopBridgeError: Error | undefined;
+  if (desktopServerUrl) {
+    try {
+      return await runDesktopPermissionDialog(req, context.abortController.signal);
+    } catch (error) {
+      desktopBridgeError = error instanceof Error ? error : new Error(String(error));
+      logForDebugging(`[Computer Use] Desktop approval bridge failed: ${desktopBridgeError.message}`);
+    }
+  }
   const setToolJSX = context.setToolJSX;
   if (!setToolJSX) {
+    if (desktopBridgeError) {
+      throw desktopBridgeError;
+    }
     // Shouldn't happen — main.tsx gate excludes non-interactive. Fail safe.
     return {
       granted: [],

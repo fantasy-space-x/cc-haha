@@ -13,6 +13,8 @@ import type {
   AgentTaskNotification,
   AttachmentRef,
   ChatState,
+  ComputerUsePermissionRequest,
+  ComputerUsePermissionResponse,
   UIAttachment,
   UIMessage,
   ServerMessage,
@@ -36,6 +38,10 @@ export type PerSessionState = {
     input: unknown
     description?: string
   } | null
+  pendingComputerUsePermission: {
+    requestId: string
+    request: ComputerUsePermissionRequest
+  } | null
   tokenUsage: TokenUsage
   elapsedSeconds: number
   statusVerb: string
@@ -54,6 +60,7 @@ const DEFAULT_SESSION_STATE: PerSessionState = {
   activeToolName: null,
   activeThinkingId: null,
   pendingPermission: null,
+  pendingComputerUsePermission: null,
   tokenUsage: { input_tokens: 0, output_tokens: 0 },
   elapsedSeconds: 0,
   statusVerb: '',
@@ -74,6 +81,11 @@ type ChatStore = {
   disconnectSession: (sessionId: string) => void
   sendMessage: (sessionId: string, content: string, attachments?: AttachmentRef[]) => void
   respondToPermission: (sessionId: string, requestId: string, allowed: boolean, rule?: string) => void
+  respondToComputerUsePermission: (
+    sessionId: string,
+    requestId: string,
+    response: ComputerUsePermissionResponse,
+  ) => void
   setSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void
   stopGeneration: (sessionId: string) => void
   loadHistory: (sessionId: string) => Promise<void>
@@ -272,6 +284,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((s) => ({ sessions: updateSessionIn(s.sessions, sessionId, () => ({ pendingPermission: null, chatState: allowed ? 'tool_executing' : 'idle' })) }))
   },
 
+  respondToComputerUsePermission: (sessionId, requestId, response) => {
+    wsManager.send(sessionId, {
+      type: 'computer_use_permission_response',
+      requestId,
+      response,
+    })
+    set((s) => ({
+      sessions: updateSessionIn(s.sessions, sessionId, () => ({
+        pendingComputerUsePermission: null,
+        chatState: response.userConsented === false ? 'idle' : 'tool_executing',
+      })),
+    }))
+  },
+
   setSessionPermissionMode: (sessionId, mode) => {
     if (!get().sessions[sessionId]) return
     wsManager.send(sessionId, { type: 'set_permission_mode', mode })
@@ -289,7 +315,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const session = s.sessions[sessionId]
       if (!session) return s
       if (session.elapsedTimer) clearInterval(session.elapsedTimer)
-      return { sessions: { ...s.sessions, [sessionId]: { ...session, chatState: 'idle', elapsedTimer: null } } }
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: {
+            ...session,
+            chatState: 'idle',
+            pendingPermission: null,
+            pendingComputerUsePermission: null,
+            elapsedTimer: null,
+          },
+        },
+      }
     })
   },
 
@@ -456,12 +493,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'permission_request':
         update((s) => ({
           pendingPermission: { requestId: msg.requestId, toolName: msg.toolName, input: msg.input, description: msg.description },
+          pendingComputerUsePermission: null,
           chatState: 'permission_pending',
           activeThinkingId: null,
           messages: [...s.messages, {
             id: nextId(), type: 'permission_request', requestId: msg.requestId,
             toolName: msg.toolName, input: msg.input, description: msg.description, timestamp: Date.now(),
           }],
+        }))
+        break
+
+      case 'computer_use_permission_request':
+        update(() => ({
+          pendingComputerUsePermission: {
+            requestId: msg.requestId,
+            request: msg.request,
+          },
+          pendingPermission: null,
+          chatState: 'permission_pending',
+          activeThinkingId: null,
         }))
         break
 
@@ -476,7 +526,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }))
         }
         if (session.elapsedTimer) clearInterval(session.elapsedTimer)
-        update(() => ({ tokenUsage: msg.usage, chatState: 'idle', activeThinkingId: null, elapsedTimer: null }))
+        update(() => ({
+          tokenUsage: msg.usage,
+          chatState: 'idle',
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          elapsedTimer: null,
+        }))
         break
       }
 
@@ -488,7 +545,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             newMessages.push({ id: nextId(), type: 'assistant_text' as const, content: pendingText, timestamp: Date.now() })
           }
           newMessages.push({ id: nextId(), type: 'error', message: msg.message, code: msg.code, timestamp: Date.now() })
-          return { messages: newMessages, chatState: 'idle', activeThinkingId: null, streamingText: '' }
+          return {
+            messages: newMessages,
+            chatState: 'idle',
+            activeThinkingId: null,
+            streamingText: '',
+            pendingPermission: null,
+            pendingComputerUsePermission: null,
+          }
         })
         useTabStore.getState().updateTabStatus(sessionId, 'error')
         {
