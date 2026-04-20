@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { skillsApi } from '../api/skills'
 import { useTranslation } from '../i18n'
 import { useSessionStore } from '../stores/sessionStore'
 import { useChatStore } from '../stores/chatStore'
@@ -13,9 +14,11 @@ import {
   FALLBACK_SLASH_COMMANDS,
   findSlashToken,
   insertSlashTrigger,
+  mergeSlashCommands,
   replaceSlashCommand,
 } from '../components/chat/composerUtils'
 import type { AttachmentRef } from '../types/chat'
+import type { SlashCommandOption } from '../components/chat/composerUtils'
 
 type Attachment = {
   id: string
@@ -39,6 +42,7 @@ export function EmptySession() {
   const [atCursorPos, setAtCursorPos] = useState(-1)
   const [slashFilter, setSlashFilter] = useState('')
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
+  const [slashCommands, setSlashCommands] = useState<SlashCommandOption[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
@@ -99,19 +103,50 @@ export function EmptySession() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [fileSearchOpen])
 
-  const filteredCommands = FALLBACK_SLASH_COMMANDS.filter((command) => {
-    if (!slashFilter) return true
+  useEffect(() => {
+    let cancelled = false
+
+    skillsApi.list(workDir || undefined)
+      .then(({ skills }) => {
+        if (cancelled) return
+        setSlashCommands(
+          skills
+            .filter((skill) => skill.userInvocable)
+            .map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+            })),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSlashCommands([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [workDir])
+
+  const filteredCommands = useMemo(() => {
+    const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
+    if (!slashFilter) return source
     const lower = slashFilter.toLowerCase()
-    return command.name.toLowerCase().includes(lower) || command.description.toLowerCase().includes(lower)
-  })
+    return source.filter((command) => (
+      command.name.toLowerCase().includes(lower) ||
+      command.description.toLowerCase().includes(lower)
+    ))
+  }, [slashCommands, slashFilter])
 
   useEffect(() => {
     setSlashSelectedIndex(0)
   }, [slashFilter])
 
   useEffect(() => {
-    if (slashMenuOpen && slashItemRefs.current[slashSelectedIndex]) {
-      slashItemRefs.current[slashSelectedIndex]?.scrollIntoView({ block: 'nearest' })
+    const activeItem = slashMenuOpen ? slashItemRefs.current[slashSelectedIndex] : null
+    if (typeof activeItem?.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' })
     }
   }, [slashMenuOpen, slashSelectedIndex])
 

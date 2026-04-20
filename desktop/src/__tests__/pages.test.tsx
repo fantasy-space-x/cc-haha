@@ -1,6 +1,14 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom'
+
+import { skillsApi } from '../api/skills'
+
+vi.mock('../api/skills', () => ({
+  skillsApi: {
+    list: vi.fn(async () => ({ skills: [] })),
+  },
+}))
 
 // Import all pages
 import { EmptySession } from '../pages/EmptySession'
@@ -21,6 +29,38 @@ import { useTabStore } from '../stores/tabStore'
  * and contain key structural elements from the prototype.
  */
 describe('Content-only pages render without errors', () => {
+  it('EmptySession slash picker includes dynamic skills before the first session starts', async () => {
+    vi.mocked(skillsApi.list).mockResolvedValueOnce({
+      skills: [
+        {
+          name: 'lark-mail',
+          description: 'Draft, send, and search emails',
+          source: 'user',
+          userInvocable: true,
+          contentLength: 120,
+          hasDirectory: true,
+        },
+        {
+          name: 'internal-only',
+          description: 'Should stay hidden',
+          source: 'user',
+          userInvocable: false,
+          contentLength: 60,
+          hasDirectory: true,
+        },
+      ],
+    })
+
+    render(<EmptySession />)
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: '/', selectionStart: 1 },
+    })
+
+    expect(await screen.findByText('/lark-mail')).toBeInTheDocument()
+    expect(screen.queryByText('/internal-only')).not.toBeInTheDocument()
+  })
+
   it('EmptySession renders mascot and composer', () => {
     const { container } = render(<EmptySession />)
     expect(container.querySelector('textarea')).toBeInTheDocument()
