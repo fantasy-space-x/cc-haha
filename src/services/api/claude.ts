@@ -199,6 +199,7 @@ import { count } from '../../utils/array.js'
 import { insertBlockAfterToolResults } from '../../utils/contentArray.js'
 import { validateBoundedIntEnvVar } from '../../utils/envValidation.js'
 import { safeParseJSON } from '../../utils/json.js'
+import { MainConversationStreamHook } from '../../utils/mainConversationStreamHook.js'
 import { getInferenceProfileBackingModel } from '../../utils/model/bedrock.js'
 import {
   normalizeModelStringForAPI,
@@ -1772,6 +1773,7 @@ async function* queryModel(
   let research: unknown = undefined
   let isFastModeRequest = isFastMode // Keep separate state as it may change if falling back
   let isAdvisorInProgress = false
+  let hookRequestId: string | undefined = undefined
 
   try {
     queryCheckpoint('query_client_creation_start')
@@ -1814,7 +1816,20 @@ async function* queryModel(
           getAPIProvider() === 'firstParty' && isFirstPartyAnthropicBaseUrl()
             ? randomUUID()
             : undefined
+        hookRequestId = randomUUID()
 
+        MainConversationStreamHook.captureRequest(
+          {
+            hookId: hookRequestId,
+            sessionId: getSessionId(),
+            clientRequestId,
+            model: options.model,
+            querySource: options.querySource,
+            attempt,
+            fastMode: context.fastMode ?? false,
+          },
+          { ...params, stream: true },
+        )
         // Use raw stream instead of BetaMessageStream to avoid O(n²) partial JSON parsing
         // BetaMessageStream calls partialParse() on every input_json_delta, which we don't need
         // since we handle tool input accumulation ourselves
@@ -2363,6 +2378,33 @@ async function* queryModel(
         throw new Error('Stream ended without receiving any events')
       }
 
+      MainConversationStreamHook.captureResponse(
+        {
+          hookId: hookRequestId,
+          sessionId: getSessionId(),
+          requestId: streamRequestId,
+          clientRequestId,
+          model: options.model,
+          querySource: options.querySource,
+          attempt: attemptNumber,
+          fastMode: isFastModeRequest,
+        },
+        {
+          type: 'message',
+          id: partialMessage.id,
+          model: partialMessage.model,
+          role: partialMessage.role,
+          content: normalizeContentFromAPI(
+            contentBlocks as BetaContentBlock[],
+            tools,
+            options.agentId,
+          ),
+          stop_reason: stopReason,
+          stop_sequence: partialMessage.stop_sequence,
+          usage,
+        },
+      )
+
       // Log summary if any stalls occurred during streaming
       if (stallCount > 0) {
         logForDebugging(
@@ -2404,6 +2446,20 @@ async function* queryModel(
     } catch (streamingError) {
       // Clear the idle timeout watchdog on error path too
       clearStreamIdleTimers()
+
+      MainConversationStreamHook.captureResponseError(
+        {
+          hookId: hookRequestId,
+          sessionId: getSessionId(),
+          requestId: streamRequestId,
+          clientRequestId,
+          model: options.model,
+          querySource: options.querySource,
+          attempt: attemptNumber,
+          fastMode: isFastModeRequest,
+        },
+        streamingError,
+      )
 
       // Instrumentation: if the watchdog had already fired and the for-await
       // threw (rather than exiting cleanly), record that the loop DID exit and
