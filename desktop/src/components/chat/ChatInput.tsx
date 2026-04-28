@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from '../../i18n'
 import { useChatStore } from '../../stores/chatStore'
-import { useTabStore } from '../../stores/tabStore'
+import { SETTINGS_TAB_ID, useTabStore } from '../../stores/tabStore'
+import { useUIStore } from '../../stores/uiStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useSessionRuntimeStore } from '../../stores/sessionRuntimeStore'
 import { useTeamStore } from '../../stores/teamStore'
 import { sessionsApi } from '../../api/sessions'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
@@ -12,11 +14,13 @@ import { AttachmentGallery } from './AttachmentGallery'
 import { ProjectContextChip } from '../shared/ProjectContextChip'
 import { DirectoryPicker } from '../shared/DirectoryPicker'
 import { FileSearchMenu, type FileSearchMenuHandle } from './FileSearchMenu'
+import { LocalSlashCommandPanel, type LocalSlashCommandName } from './LocalSlashCommandPanel'
 import {
   FALLBACK_SLASH_COMMANDS,
   findSlashTrigger,
   mergeSlashCommands,
   replaceSlashToken,
+  resolveSlashUiAction,
 } from './composerUtils'
 
 type GitInfo = { branch: string | null; repoName: string | null; workDir: string; changedFiles: number }
@@ -41,6 +45,7 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
   const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   const [slashMenuOpen, setSlashMenuOpen] = useState(false)
   const [fileSearchOpen, setFileSearchOpen] = useState(false)
+  const [localSlashPanel, setLocalSlashPanel] = useState<LocalSlashCommandName | null>(null)
   const [atFilter, setAtFilter] = useState('')
   const [atCursorPos, setAtCursorPos] = useState(-1)
   const [slashFilter, setSlashFilter] = useState('')
@@ -57,6 +62,7 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
   const sessionState = useChatStore((s) => activeTabId ? s.sessions[activeTabId] : undefined)
   const chatState = sessionState?.chatState ?? 'idle'
   const slashCommands = sessionState?.slashCommands ?? []
+  const composerPrefill = sessionState?.composerPrefill ?? null
   const activeSession = useSessionStore((state) => activeTabId ? state.sessions.find((session) => session.id === activeTabId) ?? null : null)
   const memberInfo = useTeamStore((s) => activeTabId ? s.getMemberBySessionId(activeTabId) : null)
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
@@ -67,10 +73,42 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
   const isWorkspaceMissing = activeSession?.workDirExists === false
   const canSubmit = !isWorkspaceMissing && (input.trim().length > 0 || (!isMemberSession && attachments.length > 0))
   const isHeroComposer = variant === 'hero' && !isMemberSession
+  const resolvedWorkDir = activeSession?.workDir || gitInfo?.workDir || undefined
 
   useEffect(() => {
     textareaRef.current?.focus()
   }, [isActive])
+
+  useEffect(() => {
+    if (!composerPrefill) return
+
+    setInput(composerPrefill.text)
+    setAttachments(
+      (composerPrefill.attachments ?? [])
+        .filter((attachment) => attachment.type === 'image' || attachment.data)
+        .map((attachment, index) => ({
+          id: `rewind-prefill-${composerPrefill.nonce}-${index}`,
+          name: attachment.name,
+          type: attachment.type,
+          mimeType: attachment.mimeType,
+          previewUrl: attachment.type === 'image' ? attachment.data : undefined,
+          data: attachment.data,
+        })),
+    )
+    setPlusMenuOpen(false)
+    setSlashMenuOpen(false)
+    setFileSearchOpen(false)
+    setSlashFilter('')
+    setAtFilter('')
+    setAtCursorPos(-1)
+
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      el?.focus()
+      const cursor = composerPrefill.text.length
+      el?.setSelectionRange(cursor, cursor)
+    })
+  }, [composerPrefill])
 
   useEffect(() => {
     if (!activeTabId) {
@@ -127,6 +165,22 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
   }, [slashMenuOpen])
 
   useEffect(() => {
+    if (!localSlashPanel) return
+    const handleClick = (event: MouseEvent) => {
+      if (
+        slashMenuRef.current &&
+        !slashMenuRef.current.contains(event.target as Node) &&
+        textareaRef.current &&
+        !textareaRef.current.contains(event.target as Node)
+      ) {
+        setLocalSlashPanel(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [localSlashPanel])
+
+  useEffect(() => {
     if (!fileSearchOpen) return
     const handleClick = (event: MouseEvent) => {
       const menu = document.getElementById('file-search-menu')
@@ -143,23 +197,35 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [fileSearchOpen])
 
+  const allSlashCommands = useMemo(
+    () => mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS),
+    [slashCommands],
+  )
+
   const filteredCommands = useMemo(() => {
-    const source = mergeSlashCommands(slashCommands, FALLBACK_SLASH_COMMANDS)
+    const source = allSlashCommands
     if (!slashFilter) return source
     const lower = slashFilter.toLowerCase()
     return source.filter((command) => (
       command.name.toLowerCase().includes(lower) ||
       command.description.toLowerCase().includes(lower)
     ))
-  }, [slashCommands, slashFilter])
+  }, [allSlashCommands, slashFilter])
+
+  const exactSlashCommand = useMemo(() => {
+    const normalized = slashFilter.trim().toLowerCase()
+    if (!normalized) return null
+    return filteredCommands.find((command) => command.name.toLowerCase() === normalized) ?? null
+  }, [filteredCommands, slashFilter])
 
   useEffect(() => {
     setSlashSelectedIndex(0)
   }, [slashFilter])
 
   useEffect(() => {
-    if (slashMenuOpen && slashItemRefs.current[slashSelectedIndex]) {
-      slashItemRefs.current[slashSelectedIndex]?.scrollIntoView({ block: 'nearest' })
+    const activeItem = slashMenuOpen ? slashItemRefs.current[slashSelectedIndex] : null
+    if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+      activeItem.scrollIntoView({ block: 'nearest' })
     }
   }, [slashMenuOpen, slashSelectedIndex])
 
@@ -238,6 +304,26 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
     const text = input.trim()
     if ((!text && (!attachments.length || isMemberSession)) || isWorkspaceMissing) return
 
+    const slashUiAction = !isMemberSession && text.startsWith('/') ? resolveSlashUiAction(text.slice(1)) : null
+    if (slashUiAction?.type === 'panel') {
+      setLocalSlashPanel(slashUiAction.command as LocalSlashCommandName)
+      setInput('')
+      setSlashMenuOpen(false)
+      setFileSearchOpen(false)
+      setPlusMenuOpen(false)
+      return
+    }
+
+    if (slashUiAction?.type === 'settings') {
+      useUIStore.getState().setPendingSettingsTab(slashUiAction.tab)
+      useTabStore.getState().openTab(SETTINGS_TAB_ID, 'Settings', 'settings')
+      setInput('')
+      setSlashMenuOpen(false)
+      setFileSearchOpen(false)
+      setPlusMenuOpen(false)
+      return
+    }
+
     const attachmentPayload: AttachmentRef[] = attachments.map((attachment) => ({
       type: attachment.type,
       name: attachment.name,
@@ -251,6 +337,7 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
     setPlusMenuOpen(false)
     setSlashMenuOpen(false)
     setFileSearchOpen(false)
+    setLocalSlashPanel(null)
   }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
@@ -275,6 +362,14 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
       return
     }
 
+    if (localSlashPanel) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setLocalSlashPanel(null)
+        return
+      }
+    }
+
     if (slashMenuOpen && filteredCommands.length > 0) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
@@ -286,7 +381,18 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
         setSlashSelectedIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length)
         return
       }
-      if (event.key === 'Enter' || event.key === 'Tab') {
+      if (event.key === 'Enter') {
+        if (exactSlashCommand && slashFilter.trim().toLowerCase() === exactSlashCommand.name.toLowerCase()) {
+          event.preventDefault()
+          handleSubmit()
+          return
+        }
+        event.preventDefault()
+        const selected = filteredCommands[slashSelectedIndex]
+        if (selected) selectSlashCommand(selected.name)
+        return
+      }
+      if (event.key === 'Tab') {
         event.preventDefault()
         const selected = filteredCommands[slashSelectedIndex]
         if (selected) selectSlashCommand(selected.name)
@@ -423,7 +529,7 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
           {!isMemberSession && fileSearchOpen && (
             <FileSearchMenu
               ref={fileSearchRef}
-              cwd={gitInfo?.workDir || activeSession?.workDir || ''}
+              cwd={resolvedWorkDir || ''}
               filter={atFilter}
               onSelect={(_path, name) => {
                 if (atCursorPos >= 0) {
@@ -441,6 +547,18 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
                 }
               }}
             />
+          )}
+
+          {!isMemberSession && localSlashPanel && (
+            <div ref={slashMenuRef}>
+              <LocalSlashCommandPanel
+                command={localSlashPanel}
+                sessionId={activeTabId ?? undefined}
+                cwd={resolvedWorkDir}
+                commands={allSlashCommands}
+                onClose={() => setLocalSlashPanel(null)}
+              />
+            </div>
           )}
 
           {!isMemberSession && slashMenuOpen && filteredCommands.length > 0 && (
@@ -567,7 +685,9 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              {!isMemberSession && <ModelSelector />}
+              {!isMemberSession && activeTabId && (
+                <ModelSelector runtimeKey={activeTabId} disabled={isActive} />
+              )}
               <button
                 onClick={!isMemberSession && isActive ? () => stopGeneration(activeTabId!) : handleSubmit}
                 disabled={!isMemberSession && isActive ? false : !canSubmit}
@@ -593,13 +713,13 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
           <div className="mt-3 px-1">
             {hasMessages ? (
               <ProjectContextChip
-                workDir={gitInfo?.workDir || activeSession?.workDir}
+                workDir={resolvedWorkDir}
                 repoName={gitInfo?.repoName || null}
                 branch={gitInfo?.branch || null}
               />
             ) : (
               <DirectoryPicker
-                value={gitInfo?.workDir || activeSession?.workDir || ''}
+                value={resolvedWorkDir || ''}
                 onChange={async (newWorkDir) => {
                   if (!activeTabId) return
                   const oldId = activeTabId
@@ -607,6 +727,7 @@ export function ChatInput({ variant = 'default' }: ChatInputProps) {
                   const { replaceTabSession } = useTabStore.getState()
                   const { disconnectSession, connectToSession } = useChatStore.getState()
                   const newId = await createSession(newWorkDir)
+                  useSessionRuntimeStore.getState().moveSelection(oldId, newId)
                   disconnectSession(oldId)
                   replaceTabSession(oldId, newId)
                   connectToSession(newId)

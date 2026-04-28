@@ -15,6 +15,8 @@ type CheckOptions = {
   silent?: boolean
 }
 
+const DISMISSED_UPDATE_VERSION_KEY = 'cc-haha-dismissed-update-version'
+
 type UpdateStore = {
   status: UpdateStatus
   availableVersion: string | null
@@ -33,6 +35,30 @@ type UpdateStore = {
 
 let pendingUpdate: Update | null = null
 let startupCheckPromise: Promise<void> | null = null
+
+function readDismissedUpdateVersion(): string | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    return window.localStorage.getItem(DISMISSED_UPDATE_VERSION_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeDismissedUpdateVersion(version: string | null) {
+  if (typeof window === 'undefined') return
+
+  try {
+    if (version) {
+      window.localStorage.setItem(DISMISSED_UPDATE_VERSION_KEY, version)
+    } else {
+      window.localStorage.removeItem(DISMISSED_UPDATE_VERSION_KEY)
+    }
+  } catch {
+    // Ignore storage write failures.
+  }
+}
 
 async function setPendingUpdate(next: Update | null) {
   const previous = pendingUpdate
@@ -93,6 +119,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       const checkedAt = Date.now()
 
       if (!update) {
+        writeDismissedUpdateVersion(null)
         set((state) => ({
           ...state,
           status: 'up-to-date',
@@ -108,6 +135,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         return null
       }
 
+      const dismissedVersion = readDismissedUpdateVersion()
+      const shouldPrompt = dismissedVersion !== update.version
+
       set((state) => ({
         ...state,
         status: 'available',
@@ -118,7 +148,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         totalBytes: null,
         checkedAt,
         error: null,
-        shouldPrompt: true,
+        shouldPrompt,
       }))
       return update
     } catch (error) {
@@ -160,11 +190,13 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     }))
 
     try {
+      writeDismissedUpdateVersion(null)
+      const { invoke } = await import('@tauri-apps/api/core')
       const { relaunch } = await import('@tauri-apps/plugin-process')
       let totalBytes: number | null = null
       let downloadedBytes = 0
 
-      await update.downloadAndInstall((event) => {
+      await update.download((event) => {
         if (event.event === 'Started') {
           totalBytes = event.data.contentLength ?? null
           downloadedBytes = 0
@@ -195,6 +227,9 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
         }
       })
 
+      await invoke('prepare_for_update_install')
+      await update.install()
+
       set((state) => ({
         ...state,
         status: 'restarting',
@@ -213,6 +248,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
   },
 
   dismissPrompt: () => {
+    writeDismissedUpdateVersion(get().availableVersion)
     set((state) => ({
       ...state,
       shouldPrompt: false,

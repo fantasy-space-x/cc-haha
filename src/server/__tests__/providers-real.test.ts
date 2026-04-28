@@ -66,7 +66,7 @@ describe('Real Provider Configs', () => {
     // 验证写入 cc-haha/settings.json
     const settings = await readCcHahaSettings()
     expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.minimaxi.com/anthropic')
-    expect((settings.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk-fake-test-key-for-testing-only')
+    expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk-fake-test-key-for-testing-only')
     expect((settings.env as Record<string, string>).ANTHROPIC_MODEL).toBe('MiniMax-M2.7-highspeed')
 
     // 验证原版 settings.json 没有被创建
@@ -106,7 +106,7 @@ describe('Real Provider Configs', () => {
     await service.activateProvider(jiekou.id)
     settings = await readCcHahaSettings()
     expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
-    expect((settings.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk-fake-test-key-for-testing-only')
+    expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk-fake-test-key-for-testing-only')
     expect((settings.env as Record<string, string>).ANTHROPIC_MODEL).toBe('claude-opus-4-7')
 
     // 验证 activeId 正确
@@ -151,7 +151,7 @@ describe('Real Provider Configs', () => {
 
     // 验证新字段写入
     expect((settings.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.jiekou.ai/anthropic')
-    expect((settings.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk_test')
+    expect((settings.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk_test')
 
     // 验证已有字段保留
     expect(settings.customField).toBe('should_be_preserved')
@@ -181,7 +181,7 @@ describe('Real Provider Configs', () => {
     settings = await readCcHahaSettings()
     const env = settings.env as Record<string, string> | undefined
     expect(env?.ANTHROPIC_BASE_URL).toBeUndefined()
-    expect(env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined()
+    expect(env?.ANTHROPIC_API_KEY).toBeUndefined()
     expect(env?.ANTHROPIC_MODEL).toBeUndefined()
 
     console.log('✅ activateOfficial 正确清除了 provider env')
@@ -213,7 +213,7 @@ describe('Real Provider Configs', () => {
         effortLevel: 'high',
         env: {
           ANTHROPIC_BASE_URL: 'https://original-claude-code.api.com',
-          ANTHROPIC_AUTH_TOKEN: 'original-key',
+          ANTHROPIC_API_KEY: 'original-key',
         },
       }, null, 2),
     )
@@ -231,13 +231,13 @@ describe('Real Provider Configs', () => {
     // 验证原版 settings.json 没被修改
     const original = JSON.parse(await fs.readFile(path.join(tmpDir, 'settings.json'), 'utf-8'))
     expect((original.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://original-claude-code.api.com')
-    expect((original.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('original-key')
+    expect((original.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('original-key')
     expect(original.effortLevel).toBe('high')
 
     // 验证 cc-haha/settings.json 是 Haha 自己的
     const haha = await readCcHahaSettings()
     expect((haha.env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('https://api.minimaxi.com/anthropic')
-    expect((haha.env as Record<string, string>).ANTHROPIC_AUTH_TOKEN).toBe('sk-haha-key')
+    expect((haha.env as Record<string, string>).ANTHROPIC_API_KEY).toBe('sk-haha-key')
 
     console.log('✅ 原版 settings.json 完好无损，Haha 配置独立存储')
   })

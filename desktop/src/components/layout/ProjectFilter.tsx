@@ -23,7 +23,7 @@ let cachedProjects: RecentProject[] | null = null
 let cacheTimestamp = 0
 const CACHE_TTL = 30_000
 
-export function ProjectFilter() {
+export function ProjectFilter({ variant = 'default' }: { variant?: 'default' | 'embedded' }) {
   const t = useTranslation()
   const { availableProjects, selectedProjects, setSelectedProjects } = useSessionStore()
   const [open, setOpen] = useState(false)
@@ -134,6 +134,7 @@ export function ProjectFilter() {
     : selectedProjects.length === 1
       ? optionByPath.get(selectedProjects[0]!)?.title || fallbackProjectTitle(selectedProjects[0]!, t('sidebar.other'))
       : `${selectedProjects.length} projects`
+  const triggerLabel = isAllSelected ? t('sidebar.allProjects') : label
 
   const toggleProject = (projectPath: string) => {
     if (isAllSelected) {
@@ -160,19 +161,45 @@ export function ProjectFilter() {
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
-        className="flex items-center gap-1.5 rounded-[var(--radius-lg)] bg-[var(--color-surface-container-low)] px-3 py-2 text-sm font-medium text-[var(--color-text-primary)] shadow-[0_1px_0_rgba(255,255,255,0.6)] transition-colors hover:bg-[var(--color-surface-hover)]"
+        aria-label={triggerLabel}
+        title={triggerLabel}
+        className={
+          variant === 'embedded'
+            ? `inline-flex h-7 w-7 items-center justify-center rounded-[8px] border transition-colors duration-200 ${
+              isAllSelected
+                ? 'border-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--color-sidebar-item-hover)] hover:text-[var(--color-text-secondary)]'
+                : 'border-[var(--color-sidebar-item-active-border)] bg-[var(--color-sidebar-item-active)] text-[var(--color-text-primary)] hover:bg-[var(--color-sidebar-item-hover)]'
+            }`
+            : 'inline-flex h-8 max-w-full items-center gap-1.5 rounded-[10px] border border-[var(--color-sidebar-filter-border)] bg-[var(--color-sidebar-filter-bg)] px-2 text-left text-[14px] text-[var(--color-text-primary)] transition-colors duration-200 hover:bg-[var(--color-sidebar-item-hover)]'
+        }
       >
-        <span className="truncate max-w-[180px]">{label}</span>
-        <ChevronIcon open={open} />
+        {variant === 'embedded' ? (
+          <span className="relative flex items-center justify-center">
+            <FolderIcon className="h-[14px] w-[14px]" />
+            {!isAllSelected && (
+              <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-[var(--color-brand)]" />
+            )}
+          </span>
+        ) : (
+          <>
+            <FolderIcon className="h-[14px] w-[14px] text-[var(--color-text-secondary)]" />
+            <span className="min-w-0">
+              <span className="block truncate text-[14px] font-semibold tracking-tight">{label}</span>
+            </span>
+            <span className="flex h-[14px] w-[14px] flex-shrink-0 items-center justify-center text-[var(--color-text-tertiary)] transition-colors">
+              <ChevronIcon open={open} />
+            </span>
+          </>
+        )}
       </button>
 
       {open && dropdownPos && createPortal(
         <div
           ref={dropdownRef}
-          className="w-[380px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[20px] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
+          className="w-[360px] max-w-[calc(100vw-32px)] overflow-hidden rounded-[18px] border border-[var(--color-border)] bg-[var(--color-surface-container-lowest)]"
           style={{
             position: 'fixed',
-            left: Math.min(dropdownPos.left, window.innerWidth - Math.min(380, window.innerWidth - 32) - 16),
+            left: Math.min(dropdownPos.left, window.innerWidth - Math.min(360, window.innerWidth - 32) - 16),
             ...(dropdownPos.direction === 'down'
               ? { top: dropdownPos.top }
               : { bottom: window.innerHeight - dropdownPos.top }),
@@ -184,9 +211,13 @@ export function ProjectFilter() {
             <button
               type="button"
               onClick={selectAll}
-              className="flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-hover)]"
+              className={`flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition-colors ${
+                isAllSelected
+                  ? 'bg-[var(--color-sidebar-item-active)]'
+                  : 'hover:bg-[var(--color-sidebar-item-hover)]'
+              }`}
             >
-              <FolderIcon />
+              <FolderIcon className="text-[var(--color-text-secondary)]" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{t('sidebar.allProjects')}</div>
               </div>
@@ -207,11 +238,13 @@ export function ProjectFilter() {
                     key={option.projectPath}
                     type="button"
                     onClick={() => toggleProject(option.projectPath)}
-                    className={`flex w-full items-center gap-3 rounded-[16px] px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-hover)] ${
-                      checked ? 'bg-[var(--color-surface-selected)]' : ''
+                    className={`flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition-colors ${
+                      checked
+                        ? 'bg-[var(--color-sidebar-item-active)]'
+                        : 'hover:bg-[var(--color-sidebar-item-hover)]'
                     }`}
                   >
-                    {option.isGit ? <GitBranchIcon /> : <FolderIcon />}
+                    {option.isGit ? <GitBranchIcon className="text-[var(--color-text-secondary)]" /> : <FolderIcon />}
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">{option.title}</div>
                       {option.subtitle && (
@@ -277,7 +310,7 @@ function ChevronIcon({ open }: { open: boolean }) {
   )
 }
 
-function FolderIcon() {
+function FolderIcon({ className = 'text-[var(--color-text-secondary)]' }: { className?: string }) {
   return (
     <svg
       width="20"
@@ -288,14 +321,14 @@ function FolderIcon() {
       strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="flex-shrink-0 text-[var(--color-text-secondary)]"
+      className={`flex-shrink-0 ${className}`}
     >
       <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
     </svg>
   )
 }
 
-function GitBranchIcon() {
+function GitBranchIcon({ className = 'text-[var(--color-text-secondary)]' }: { className?: string }) {
   return (
     <svg
       width="20"
@@ -306,7 +339,7 @@ function GitBranchIcon() {
       strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="flex-shrink-0 text-[var(--color-text-secondary)]"
+      className={`flex-shrink-0 ${className}`}
     >
       <circle cx="18" cy="18" r="3" />
       <circle cx="6" cy="6" r="3" />

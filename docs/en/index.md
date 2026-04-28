@@ -6,7 +6,7 @@ hero:
   text: Locally Runnable Claude Code
   tagline: Repaired from leaked source, supports any Anthropic-compatible API endpoint (MiniMax, OpenRouter, etc.)
   image:
-    src: /images/banner.jpg
+    src: /images/logo-horizontal.png
     alt: Claude Code Haha
   actions:
     - theme: brand

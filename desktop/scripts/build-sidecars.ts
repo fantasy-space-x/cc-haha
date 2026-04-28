@@ -162,21 +162,25 @@ async function compileExecutable({
   // that causes "load code signature error 4" and SIGKILL at launch.
   // Fix: strip the broken signature, then ad-hoc sign.
   if (process.platform === 'darwin') {
-    console.log(`[build-sidecars] ad-hoc signing ${outputPath} for macOS ...`)
-    const strip = Bun.spawn(['codesign', '--remove-signature', outputPath], {
-      stdout: 'inherit',
-      stderr: 'inherit',
-    })
-    await strip.exited
-
-    const sign = Bun.spawn(
-      ['codesign', '--sign', '-', '--force', '--timestamp=none', outputPath],
-      { stdout: 'inherit', stderr: 'inherit' },
-    )
-    const signExit = await sign.exited
-    if (signExit !== 0) {
-      throw new Error(`[build-sidecars] ad-hoc codesign failed for ${outputPath} (exit ${signExit})`)
-    }
-    console.log(`[build-sidecars] ad-hoc signed ${outputPath}`)
+    await adHocSignMacBinary(outputPath)
   }
+}
+
+async function adHocSignMacBinary(outputPath: string) {
+  console.log(`[build-sidecars] ad-hoc signing ${outputPath} for macOS ...`)
+  const strip = Bun.spawn(['codesign', '--remove-signature', outputPath], {
+    stdout: 'inherit',
+    stderr: 'inherit',
+  })
+  await strip.exited
+
+  const sign = Bun.spawn(
+    ['codesign', '--sign', '-', '--force', '--timestamp=none', outputPath],
+    { stdout: 'inherit', stderr: 'inherit' },
+  )
+  const signExit = await sign.exited
+  if (signExit !== 0) {
+    throw new Error(`[build-sidecars] ad-hoc codesign failed for ${outputPath} (exit ${signExit})`)
+  }
+  console.log(`[build-sidecars] ad-hoc signed ${outputPath}`)
 }

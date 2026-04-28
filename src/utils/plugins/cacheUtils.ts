@@ -9,6 +9,7 @@ import { logForDebugging } from '../debug.js'
 import { getErrnoCode } from '../errors.js'
 import { logError } from '../log.js'
 import { loadInstalledPluginsFromDisk } from './installedPluginsManager.js'
+import { clearInstalledPluginsCache } from './installedPluginsManager.js'
 import { clearPluginAgentCache } from './loadPluginAgents.js'
 import { clearPluginCommandCache } from './loadPluginCommands.js'
 import {
@@ -24,6 +25,7 @@ const ORPHANED_AT_FILENAME = '.orphaned_at'
 const CLEANUP_AGE_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 export function clearAllPluginCaches(): void {
+  clearInstalledPluginsCache()
   clearPluginCache()
   clearPluginCommandCache()
   clearPluginAgentCache()

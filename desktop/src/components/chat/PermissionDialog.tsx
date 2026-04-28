@@ -127,7 +127,7 @@ export function PermissionDialog({ requestId, toolName, input, description }: Pr
   const allowRawToggle = !preview
 
   return (
-    <div className={`mb-4 ml-10 overflow-hidden rounded-[var(--radius-lg)] border ${
+    <div className={`mb-4 overflow-hidden rounded-[var(--radius-lg)] border ${
       isPending
         ? 'border-[var(--color-warning)] bg-[var(--color-surface-container-lowest)]'
         : 'border-[var(--color-outline-variant)]/40 bg-[var(--color-surface-container-low)] opacity-70'

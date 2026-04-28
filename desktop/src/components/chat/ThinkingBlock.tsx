@@ -18,7 +18,7 @@ export function ThinkingBlock({ content, isActive = false }: { content: string; 
   const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + '...' : firstLine
 
   return (
-    <div className="mb-1 ml-10">
+    <div className="mb-1">
       <style>{thinkingStyles}</style>
       <button
         onClick={() => setExpanded((v) => !v)}

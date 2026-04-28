@@ -30,6 +30,9 @@ describe('MermaidRenderer', () => {
 
     const previewButton = await screen.findByRole('button', { name: /preview/i })
     expect(previewButton).toBeInTheDocument()
+    expect(initializeMock).toHaveBeenCalledWith(expect.objectContaining({
+      suppressErrorRendering: true,
+    }))
 
     fireEvent.click(previewButton)
 

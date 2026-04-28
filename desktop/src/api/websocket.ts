@@ -27,7 +27,17 @@ class WebSocketManager {
 
   connect(sessionId: string) {
     const existing = this.connections.get(sessionId)
-    if (existing && !existing.intentionalClose) return
+    if (
+      existing &&
+      !existing.intentionalClose &&
+      (
+        existing.ws.readyState === WebSocket.OPEN ||
+        existing.ws.readyState === WebSocket.CONNECTING ||
+        existing.reconnectTimer !== null
+      )
+    ) {
+      return
+    }
 
     const wsUrl = getBaseUrl().replace(/^http/, 'ws')
     const ws = new WebSocket(`${wsUrl}/ws/${sessionId}`)
@@ -36,10 +46,10 @@ class WebSocketManager {
       ws,
       handlers: existing?.handlers ?? new Set(),
       reconnectTimer: null,
-      reconnectAttempt: 0,
+      reconnectAttempt: existing?.reconnectAttempt ?? 0,
       pingInterval: null,
       intentionalClose: false,
-      pendingMessages: [],
+      pendingMessages: existing?.pendingMessages ?? [],
     }
     this.connections.set(sessionId, conn)
 
@@ -98,13 +108,27 @@ class WebSocketManager {
   }
 
   send(sessionId: string, message: ClientMessage) {
-    const conn = this.connections.get(sessionId)
-    if (!conn) return
+    let conn = this.connections.get(sessionId)
+    if (!conn) {
+      this.connect(sessionId)
+      conn = this.connections.get(sessionId)
+      if (!conn) return
+    }
 
     if (conn.ws.readyState === WebSocket.OPEN) {
       conn.ws.send(JSON.stringify(message))
-    } else if (conn.ws.readyState === WebSocket.CONNECTING) {
-      conn.pendingMessages.push(message)
+      return
+    }
+
+    conn.pendingMessages.push(message)
+
+    if (
+      conn.ws.readyState === WebSocket.CLOSED ||
+      conn.ws.readyState === WebSocket.CLOSING
+    ) {
+      if (!conn.intentionalClose && !conn.reconnectTimer) {
+        this.scheduleReconnect(sessionId, conn)
+      }
     }
   }
 
@@ -147,15 +171,8 @@ class WebSocketManager {
 
     conn.reconnectTimer = setTimeout(() => {
       if (this.connections.get(sessionId) === conn && !conn.intentionalClose) {
-        this.connections.delete(sessionId)
+        conn.reconnectTimer = null
         this.connect(sessionId)
-        // Migrate handlers to new connection
-        const newConn = this.connections.get(sessionId)
-        if (newConn) {
-          for (const handler of conn.handlers) {
-            newConn.handlers.add(handler)
-          }
-        }
       }
     }, delay)
   }

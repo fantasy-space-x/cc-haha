@@ -21,26 +21,49 @@ import type { AnthropicRequest } from './transform/types.js'
 const providerService = new ProviderService()
 
 export async function handleProxyRequest(req: Request, url: URL): Promise<Response> {
-  // Only handle POST /proxy/v1/messages
-  if (req.method !== 'POST' || url.pathname !== '/proxy/v1/messages') {
+  const providerMatch = url.pathname.match(/^\/proxy\/providers\/([^/]+)\/v1\/messages$/)
+  const providerId = providerMatch ? decodeURIComponent(providerMatch[1]!) : undefined
+  const isActiveProxyPath = url.pathname === '/proxy/v1/messages'
+
+  // Only handle POST /proxy/v1/messages or POST /proxy/providers/:providerId/v1/messages
+  if (req.method !== 'POST' || (!isActiveProxyPath && !providerMatch)) {
     return Response.json(
-      { error: 'Not Found', message: 'Proxy only handles POST /proxy/v1/messages' },
+      {
+        error: 'Not Found',
+        message: 'Proxy only handles POST /proxy/v1/messages and POST /proxy/providers/:providerId/v1/messages',
+      },
       { status: 404 },
     )
   }
 
-  // Read active provider config
-  const config = await providerService.getActiveProviderForProxy()
+  // Read active/default provider config or an explicitly-scoped provider config.
+  const config = await providerService.getProviderForProxy(providerId)
   if (!config) {
     return Response.json(
-      { type: 'error', error: { type: 'invalid_request_error', message: 'No active provider configured for proxy' } },
+      {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          message: providerId
+            ? `Provider "${providerId}" is not configured for proxy`
+            : 'No active provider configured for proxy',
+        },
+      },
       { status: 400 },
     )
   }
 
   if (config.apiFormat === 'anthropic') {
     return Response.json(
-      { type: 'error', error: { type: 'invalid_request_error', message: 'Active provider uses anthropic format — proxy not needed' } },
+      {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          message: providerId
+            ? `Provider "${providerId}" uses anthropic format — proxy not needed`
+            : 'Active provider uses anthropic format — proxy not needed',
+        },
+      },
       { status: 400 },
     )
   }

@@ -180,7 +180,7 @@ export function SkillList() {
                     key={`${skill.source}-${skill.name}`}
                     onClick={() =>
                       skill.hasDirectory &&
-                      fetchSkillDetail(skill.source, skill.name, currentWorkDir)
+                      fetchSkillDetail(skill.source, skill.name, currentWorkDir, 'skills')
                     }
                     disabled={!skill.hasDirectory}
                     className="group rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)] disabled:opacity-60 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:border-transparent"

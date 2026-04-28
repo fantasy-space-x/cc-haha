@@ -295,4 +295,72 @@ describe('TabBar', () => {
     expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-1', 'tab-2'])
     expect(useTabStore.getState().activeTabId).toBe('tab-1')
   })
+
+  it('closes a tab from the close button without activating drag behavior', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    const disconnectSession = vi.fn()
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: 'tab-1', title: 'First Session', type: 'session', status: 'idle' },
+        { sessionId: 'tab-2', title: 'Second Session', type: 'session', status: 'idle' },
+      ],
+      activeTabId: 'tab-2',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    const firstTab = screen.getByText('First Session').closest('.tab-bar-hit-area')
+    const closeButton = screen.getByLabelText('Close First Session')
+
+    expect(firstTab).toHaveClass('group')
+
+    fireEvent.mouseDown(closeButton, { button: 0, clientX: 20, clientY: 10 })
+    fireEvent.click(closeButton)
+    fireEvent.mouseMove(window, { clientX: 260, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    expect(disconnectSession).toHaveBeenCalledWith('tab-1')
+    expect(useTabStore.getState().tabs.map((tab) => tab.sessionId)).toEqual(['tab-2'])
+    expect(useTabStore.getState().activeTabId).toBe('tab-2')
+  })
+
+  it('closes terminal tabs without disconnecting chat sessions', async () => {
+    const { TabBar } = await import('./TabBar')
+    const { useTabStore } = await import('../../stores/tabStore')
+    const { useChatStore } = await import('../../stores/chatStore')
+
+    const disconnectSession = vi.fn()
+
+    useTabStore.setState({
+      tabs: [
+        { sessionId: '__terminal__1', title: 'Terminal 1', type: 'terminal', status: 'idle' },
+      ],
+      activeTabId: '__terminal__1',
+    })
+    useChatStore.setState({
+      sessions: {},
+      disconnectSession,
+    } as Partial<ReturnType<typeof useChatStore.getState>>)
+
+    await act(async () => {
+      render(<TabBar />)
+    })
+
+    expect(screen.getByText('terminal')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Close Terminal 1'))
+
+    expect(disconnectSession).not.toHaveBeenCalled()
+    expect(useTabStore.getState().tabs).toEqual([])
+  })
 })

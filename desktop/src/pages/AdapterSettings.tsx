@@ -4,6 +4,7 @@ import { useTranslation } from '../i18n'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
 import { DirectoryPicker } from '../components/shared/DirectoryPicker'
+import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 
 type ImTab = 'feishu' | 'telegram'
 
@@ -37,6 +38,8 @@ export function AdapterSettings() {
   // Pairing
   const [pairingCode, setPairingCode] = useState<string | null>(null)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [pendingUnbind, setPendingUnbind] = useState<{ platform: 'telegram' | 'feishu'; userId: string | number } | null>(null)
+  const [isUnbinding, setIsUnbinding] = useState(false)
 
   useEffect(() => {
     fetchConfig()
@@ -114,10 +117,20 @@ export function AdapterSettings() {
   }, [generatePairingCode])
 
   const handleUnbind = useCallback(async (platform: 'telegram' | 'feishu', userId: string | number) => {
-    if (!confirm(t('settings.adapters.unbindConfirm'))) return
-    await removePairedUser(platform, userId)
-    await fetchConfig()
-  }, [removePairedUser, fetchConfig, t])
+    setPendingUnbind({ platform, userId })
+  }, [])
+
+  const confirmUnbind = useCallback(async () => {
+    if (!pendingUnbind) return
+    setIsUnbinding(true)
+    try {
+      await removePairedUser(pendingUnbind.platform, pendingUnbind.userId)
+      await fetchConfig()
+      setPendingUnbind(null)
+    } finally {
+      setIsUnbinding(false)
+    }
+  }, [pendingUnbind, removePairedUser, fetchConfig])
 
   // Collect all paired users across platforms
   const allPairedUsers = [
@@ -344,6 +357,21 @@ export function AdapterSettings() {
           </span>
         )}
       </div>
+
+      <ConfirmDialog
+        open={pendingUnbind !== null}
+        onClose={() => {
+          if (isUnbinding) return
+          setPendingUnbind(null)
+        }}
+        onConfirm={confirmUnbind}
+        title={t('settings.adapters.unbind')}
+        body={t('settings.adapters.unbindConfirm')}
+        confirmLabel={t('settings.adapters.unbind')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="danger"
+        loading={isUnbinding}
+      />
     </div>
   )
 }

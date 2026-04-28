@@ -1,6 +1,25 @@
-const DEFAULT_BASE_URL = 'http://127.0.0.1:3456'
+const ENV_BASE_URL =
+  typeof import.meta !== 'undefined' &&
+  typeof import.meta.env?.VITE_DESKTOP_SERVER_URL === 'string' &&
+  import.meta.env.VITE_DESKTOP_SERVER_URL.length > 0
+    ? import.meta.env.VITE_DESKTOP_SERVER_URL
+    : undefined
+
+const DEFAULT_BASE_URL = ENV_BASE_URL || 'http://127.0.0.1:3456'
 
 let baseUrl = DEFAULT_BASE_URL
+
+function getErrorMessage(status: number, body: unknown) {
+  if (body && typeof body === 'object' && 'message' in body && typeof body.message === 'string') {
+    return body.message
+  }
+
+  if (typeof body === 'string' && body.trim().length > 0) {
+    return body
+  }
+
+  return `API error ${status}`
+}
 
 export function setBaseUrl(url: string) {
   baseUrl = url.replace(/\/$/, '')
@@ -19,7 +38,7 @@ export class ApiError extends Error {
     public status: number,
     public body: unknown,
   ) {
-    super(`API error ${status}: ${typeof body === 'string' ? body : JSON.stringify(body)}`)
+    super(getErrorMessage(status, body))
     this.name = 'ApiError'
   }
 }
@@ -31,7 +50,8 @@ async function request<T>(method: string, path: string, body?: unknown, options?
   }
 
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), options?.timeout ?? 30_000)
+  const timeoutMs = options?.timeout ?? 30_000
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(url, {
       method,
@@ -50,6 +70,9 @@ async function request<T>(method: string, path: string, body?: unknown, options?
     return res.json() as Promise<T>
   } catch (err) {
     clearTimeout(timeout)
+    if (controller.signal.aborted) {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`)
+    }
     throw err
   }
 }

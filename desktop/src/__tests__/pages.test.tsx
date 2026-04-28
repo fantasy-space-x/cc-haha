@@ -3,10 +3,35 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
 import { skillsApi } from '../api/skills'
+import { mcpApi } from '../api/mcp'
+import { useUIStore } from '../stores/uiStore'
 
 vi.mock('../api/skills', () => ({
   skillsApi: {
     list: vi.fn(async () => ({ skills: [] })),
+  },
+}))
+
+vi.mock('../api/mcp', () => ({
+  mcpApi: {
+    list: vi.fn(async () => ({ servers: [] })),
+    status: vi.fn(async (name: string) => ({
+      server: {
+        name,
+        scope: 'user',
+        transport: 'http',
+        enabled: true,
+        status: 'connected',
+        statusLabel: 'Connected',
+        configLocation: 'User',
+        summary: 'https://mcp.example.com/mcp',
+        canEdit: true,
+        canRemove: true,
+        canReconnect: true,
+        canToggle: true,
+        config: { type: 'http', url: 'https://mcp.example.com/mcp', headers: {} },
+      },
+    })),
   },
 }))
 
@@ -58,6 +83,12 @@ describe('Content-only pages render without errors', () => {
     })
 
     expect(await screen.findByText('/lark-mail')).toBeInTheDocument()
+    expect(screen.getByText('/mcp')).toBeInTheDocument()
+    expect(screen.getByText('/skills')).toBeInTheDocument()
+    expect(screen.getByText('/help')).toBeInTheDocument()
+    expect(screen.getByText('/plugin')).toBeInTheDocument()
+    expect(screen.getByText('/context')).toBeInTheDocument()
+    expect(screen.queryByText('/plugins')).not.toBeInTheDocument()
     expect(screen.queryByText('/internal-only')).not.toBeInTheDocument()
   })
 
@@ -198,6 +229,279 @@ describe('Content-only pages render without errors', () => {
 
     expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^run$/i })).not.toBeInTheDocument()
+    useChatStore.setState({ sessions: {} })
+  })
+
+  it('ActiveSession opens a local /mcp panel and clicking an item routes to settings', async () => {
+    const SESSION_ID = 'mcp-panel-session'
+    const sendMessage = vi.fn()
+    vi.mocked(mcpApi.list).mockResolvedValueOnce({
+      servers: [
+        {
+          name: 'deepwiki',
+          scope: 'user',
+          transport: 'http',
+          enabled: true,
+          status: 'connected',
+          statusLabel: 'Connected',
+          configLocation: '/tmp/config',
+          summary: 'https://mcp.deepwiki.com/mcp',
+          canEdit: true,
+          canRemove: true,
+          canReconnect: true,
+          canToggle: true,
+          config: { type: 'http', url: 'https://mcp.deepwiki.com/mcp', headers: {} },
+        },
+      ],
+    })
+    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
+    useSessionStore.setState({
+      sessions: [{
+        id: SESSION_ID,
+        title: 'Test',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 0,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: SESSION_ID,
+      isLoading: false,
+      error: null,
+    })
+    useChatStore.setState({
+      sessions: {
+        [SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+      sendMessage,
+    })
+
+    render(<ActiveSession />)
+
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: '/mcp', selectionStart: 4 } })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(await screen.findByText('Available MCP tools')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('deepwiki'))
+    expect(useTabStore.getState().activeTabId).toBe('__settings__')
+    expect(useUIStore.getState().pendingSettingsTab).toBe('mcp')
+
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
+    useChatStore.setState({ sessions: {} })
+  })
+
+  it('ActiveSession opens a local /skills panel from the fallback slash commands', async () => {
+    const SESSION_ID = 'skills-panel-session'
+    const sendMessage = vi.fn()
+    vi.mocked(skillsApi.list).mockResolvedValueOnce({
+      skills: [
+        {
+          name: 'lark-mail',
+          description: 'Draft, send, and search emails',
+          source: 'user',
+          userInvocable: true,
+          contentLength: 120,
+          hasDirectory: true,
+        },
+      ],
+    })
+    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
+    useSessionStore.setState({
+      sessions: [{
+        id: SESSION_ID,
+        title: 'Test',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 0,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: SESSION_ID,
+      isLoading: false,
+      error: null,
+    })
+    useChatStore.setState({
+      sessions: {
+        [SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+      sendMessage,
+    })
+
+    render(<ActiveSession />)
+
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: '/skills', selectionStart: 7 } })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(await screen.findByText('Available skills')).toBeInTheDocument()
+    expect(screen.getByText('/lark-mail')).toBeInTheDocument()
+
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
+    useChatStore.setState({ sessions: {} })
+  })
+
+  it('ActiveSession routes /plugin to Settings > Plugins instead of sending a chat message', () => {
+    const SESSION_ID = 'plugin-panel-session'
+    const sendMessage = vi.fn()
+    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
+    useSessionStore.setState({
+      sessions: [{
+        id: SESSION_ID,
+        title: 'Test',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 0,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: SESSION_ID,
+      isLoading: false,
+      error: null,
+    })
+    useChatStore.setState({
+      sessions: {
+        [SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+      sendMessage,
+    })
+
+    render(<ActiveSession />)
+
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: '/plugin', selectionStart: 7 } })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(useTabStore.getState().activeTabId).toBe('__settings__')
+    expect(useUIStore.getState().pendingSettingsTab).toBe('plugins')
+
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
+    useChatStore.setState({ sessions: {} })
+  })
+
+  it('ActiveSession routes /help to the local command panel', () => {
+    const SESSION_ID = 'help-panel-session'
+    const sendMessage = vi.fn()
+    useTabStore.setState({ tabs: [{ sessionId: SESSION_ID, title: 'Test', type: 'session' as const, status: 'idle' }], activeTabId: SESSION_ID })
+    useSessionStore.setState({
+      sessions: [{
+        id: SESSION_ID,
+        title: 'Test',
+        createdAt: '2026-04-10T00:00:00.000Z',
+        modifiedAt: '2026-04-10T00:00:00.000Z',
+        messageCount: 0,
+        projectPath: '/workspace/project',
+        workDir: '/workspace/project',
+        workDirExists: true,
+      }],
+      activeSessionId: SESSION_ID,
+      isLoading: false,
+      error: null,
+    })
+    useChatStore.setState({
+      sessions: {
+        [SESSION_ID]: {
+          messages: [],
+          chatState: 'idle',
+          connectionState: 'connected',
+          streamingText: '',
+          streamingToolInput: '',
+          activeToolUseId: null,
+          activeToolName: null,
+          activeThinkingId: null,
+          pendingPermission: null,
+          pendingComputerUsePermission: null,
+          tokenUsage: { input_tokens: 0, output_tokens: 0 },
+          elapsedSeconds: 0,
+          statusVerb: '',
+          slashCommands: [
+            { name: 'cost', description: 'Show token usage and costs' },
+            ...Array.from({ length: 14 }, (_, index) => ({
+              name: `extra-${index + 1}`,
+              description: `Extra command ${index + 1}`,
+            })),
+          ],
+          agentTaskNotifications: {},
+          elapsedTimer: null,
+        },
+      },
+      sendMessage,
+    })
+
+    render(<ActiveSession />)
+
+    const textarea = screen.getByRole('textbox')
+    fireEvent.change(textarea, { target: { value: '/help', selectionStart: 5 } })
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter' })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(screen.getByText('Slash commands')).toBeInTheDocument()
+    expect(screen.getByText('/clear')).toBeInTheDocument()
+    expect(screen.getByText('/cost')).toBeInTheDocument()
+    expect(screen.getByText('13 more commands available. Type / to search the full command list.')).toBeInTheDocument()
+
+    useTabStore.setState({ tabs: [], activeTabId: null })
+    useSessionStore.setState({ sessions: [], activeSessionId: null, isLoading: false, error: null })
     useChatStore.setState({ sessions: {} })
   })
 

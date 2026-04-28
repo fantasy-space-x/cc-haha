@@ -14,6 +14,7 @@ import { cronScheduler } from './services/cronScheduler.js'
 import { handleProxyRequest } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
+import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
 
 function readArgValue(flag: string): string | undefined {
   const args = process.argv.slice(2)
@@ -217,6 +218,13 @@ export function startServer(port = PORT, host = HOST) {
 
   // Start the cron scheduler to execute scheduled tasks
   cronScheduler.start()
+
+  void ensureDesktopCliLauncherInstalled().catch((error) => {
+    console.error(
+      '[desktop-cli-launcher] failed to install bundled launcher:',
+      error instanceof Error ? error.message : error,
+    )
+  })
 
   console.log(`[Server] Claude Code API server running at http://${host}:${port}`)
   return server

@@ -62,3 +62,6 @@ sidebar-snapshot.md
 docs/.vitepress/dist
 docs/.vitepress/cache
 runtime/__pycache__
+
+# IDE
+.idea

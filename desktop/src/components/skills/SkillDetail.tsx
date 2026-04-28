@@ -4,6 +4,7 @@ import { useTranslation } from '../../i18n'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { CodeViewer } from '../chat/CodeViewer'
 import type { FileTreeNode, SkillFrontmatter } from '../../types/skill'
+import { useUIStore } from '../../stores/uiStore'
 
 const META_PRIORITY = [
   'description',
@@ -20,7 +21,7 @@ const META_PRIORITY = [
 ] as const
 
 export function SkillDetail() {
-  const { selectedSkill, isDetailLoading, clearSelection } = useSkillStore()
+  const { selectedSkill, selectedSkillReturnTab, isDetailLoading, clearSelection } = useSkillStore()
   const t = useTranslation()
   const [selectedFile, setSelectedFile] = useState<string>('SKILL.md')
 
@@ -30,6 +31,14 @@ export function SkillDetail() {
       ? selectedFile
       : selectedSkill.files[0]?.path || 'SKILL.md'
   }, [selectedFile, selectedSkill])
+
+  const handleBack = () => {
+    const returnTab = selectedSkillReturnTab
+    clearSelection()
+    if (returnTab === 'plugins') {
+      useUIStore.getState().setPendingSettingsTab('plugins')
+    }
+  }
 
   if (isDetailLoading) {
     return (
@@ -50,7 +59,7 @@ export function SkillDetail() {
     <div className="flex h-full min-h-0 flex-col gap-4 min-w-0">
       <div>
         <button
-          onClick={clearSelection}
+          onClick={handleBack}
           className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
         >
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>

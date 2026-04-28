@@ -2723,6 +2723,26 @@ async function run(): Promise<CommanderCommand> {
           }));
         }, configs).catch(err => logForDebugging(`[MCP] ${label} connect error: ${err}`));
       };
+      const getDesktopMcpStartupTimeoutMs = (): number => {
+        const raw = process.env.CC_HAHA_DESKTOP_AWAIT_MCP_TIMEOUT_MS;
+        if (raw === undefined) return 5_000;
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 0) return 5_000;
+        return parsed;
+      };
+      const waitForDesktopMcpStartup = async (promise: Promise<void>, label: string): Promise<void> => {
+        const timeoutMs = getDesktopMcpStartupTimeoutMs();
+        if (timeoutMs === 0) return;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([promise.then(() => false), new Promise<boolean>(resolve => {
+          timer = setTimeout(resolve, timeoutMs, true);
+        })]);
+        if (timer) clearTimeout(timer);
+        if (timedOut) {
+          logForDebugging(`[MCP] ${label} servers not ready after ${timeoutMs}ms — proceeding; background connection continues`);
+        }
+      };
+
       // Await all MCP configs for regular print-mode sessions — they're
       // often single-turn, so "late-connecting servers visible next turn"
       // doesn't help. SDK init message and turn-1 tool list should include
@@ -2742,10 +2762,13 @@ async function run(): Promise<CommanderCommand> {
       // fetch was kicked off early (line ~2558) so only residual time blocks
       // here. --bare skips claude.ai entirely for perf-sensitive scripts.
       profileCheckpoint('before_connectMcp');
+      const regularMcpConnect = connectMcpBatch(regularMcpConfigs, 'regular');
       if (sdkUrl) {
-        void connectMcpBatch(regularMcpConfigs, 'regular');
+        if (process.env.CC_HAHA_DESKTOP_AWAIT_MCP === '1') {
+          await waitForDesktopMcpStartup(regularMcpConnect, 'regular MCP');
+        }
       } else {
-        await connectMcpBatch(regularMcpConfigs, 'regular');
+        await regularMcpConnect;
       }
       profileCheckpoint('after_connectMcp');
       // Dedup: suppress plugin MCP servers that duplicate a claude.ai

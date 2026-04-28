@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
 @plugin "@tailwindcss/typography";
 
 /* ─── Self-hosted fonts (no Google CDN dependency) ────────────── */
@@ -94,6 +95,19 @@
   --line-numbers-font-size: 11px;
 }
 
+.settings-terminal-host .xterm {
+  height: 100%;
+  padding: 0;
+}
+
+.settings-terminal-host .xterm-viewport {
+  scrollbar-color: rgba(215, 210, 208, 0.35) transparent;
+}
+
+.settings-terminal-host .xterm-screen {
+  outline: none;
+}
+
 /* ─── Tailwind Theme Override (matches prototype design system) ─── */
 @theme {
   --color-primary: #8F482F;
@@ -159,6 +173,17 @@
   --color-surface-sidebar: var(--color-surface-container-low);
   --color-surface-hover: var(--color-surface-container-high);
   --color-surface-selected: var(--color-surface-container);
+  --color-model-option-selected-bg: var(--color-primary-fixed);
+  --color-model-option-selected-border: rgba(143, 72, 47, 0.2);
+  --color-sidebar-filter-bg: transparent;
+  --color-sidebar-filter-border: rgba(218, 193, 186, 0.92);
+  --color-sidebar-filter-icon-bg: transparent;
+  --color-sidebar-search-bg: rgba(255, 255, 255, 0.78);
+  --color-sidebar-search-border: rgba(218, 193, 186, 0.88);
+  --color-sidebar-item-hover: rgba(239, 238, 234, 0.82);
+  --color-sidebar-item-active: rgba(239, 238, 234, 0.94);
+  --color-sidebar-item-active-border: rgba(143, 72, 47, 0.12);
+  --sidebar-panel-bg-image: none;
 
   /* Border aliases */
   --color-border: var(--color-outline-variant);
@@ -179,6 +204,7 @@
 
   /* Shadows */
   --shadow-dropdown: 0 4px 20px rgba(27, 28, 26, 0.04), 0 12px 40px rgba(27, 28, 26, 0.08);
+  --shadow-sidebar-filter: none;
   --shadow-focus-ring: 0 0 0 1px rgba(143, 72, 47, 0.16);
   --shadow-error-ring: 0 0 0 1px rgba(186, 26, 26, 0.18);
   --shadow-button-primary: 0 8px 24px rgba(143, 72, 47, 0.18);
@@ -290,9 +316,22 @@
   --color-success: #7EDB8B;
   --color-warning: #F7C46C;
 
-  --color-surface-sidebar: var(--color-surface-container-low);
+  --color-surface-sidebar: #171615;
   --color-surface-hover: var(--color-surface-container-highest);
   --color-surface-selected: var(--color-surface-container);
+  --color-model-option-selected-bg: rgba(255, 181, 159, 0.13);
+  --color-model-option-selected-border: rgba(255, 181, 159, 0.34);
+  --color-sidebar-filter-bg: rgba(255, 255, 255, 0.01);
+  --color-sidebar-filter-border: rgba(255, 255, 255, 0.08);
+  --color-sidebar-filter-icon-bg: transparent;
+  --color-sidebar-search-bg: rgba(255, 255, 255, 0.03);
+  --color-sidebar-search-border: rgba(255, 255, 255, 0.06);
+  --color-sidebar-item-hover: rgba(255, 255, 255, 0.04);
+  --color-sidebar-item-active: rgba(255, 255, 255, 0.06);
+  --color-sidebar-item-active-border: rgba(255, 181, 159, 0.14);
+  --sidebar-panel-bg-image:
+    radial-gradient(circle at top left, rgba(255, 181, 159, 0.045), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
 
   --color-border: rgba(90, 65, 56, 0.18);
   --color-border-focus: rgba(255, 181, 159, 0.55);
@@ -306,7 +345,8 @@
   --color-brand: var(--color-primary);
   --color-text-accent: var(--color-tertiary);
 
-  --shadow-dropdown: 0 12px 32px rgba(0, 0, 0, 0.4);
+  --shadow-dropdown: 0 16px 40px rgba(0, 0, 0, 0.42);
+  --shadow-sidebar-filter: none;
   --shadow-focus-ring: 0 0 0 1px rgba(255, 181, 159, 0.32);
   --shadow-error-ring: 0 0 0 1px rgba(255, 180, 171, 0.26);
   --shadow-button-primary: 0 12px 24px rgba(255, 110, 64, 0.18);
@@ -449,6 +489,8 @@ button, input, textarea, select, a, [role="button"] {
 .sidebar-panel {
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
+  background-image: var(--sidebar-panel-bg-image);
+  background-repeat: no-repeat;
   transition:
     background-color var(--motion-sidebar-duration) var(--motion-sidebar-easing),
     border-color var(--motion-sidebar-duration) var(--motion-sidebar-easing);
@@ -597,6 +639,28 @@ button, input, textarea, select, a, [role="button"] {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--color-outline); border-radius: 9999px; opacity: 0.3; }
 ::-webkit-scrollbar-thumb:hover { opacity: 0.6; }
+
+.sidebar-scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-outline) 72%, transparent) transparent;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-outline) 78%, transparent);
+  border-radius: 9999px;
+}
+
+.sidebar-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-outline) 92%, transparent);
+}
 
 /* Animations */
 @keyframes shimmer {

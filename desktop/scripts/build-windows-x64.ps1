@@ -15,6 +15,7 @@ $targetTriple = 'x86_64-pc-windows-msvc'
 $tauriTargetDir = Join-Path $desktopDir 'src-tauri\target'
 $canonicalOutputDir = Join-Path $desktopDir 'build-artifacts\windows-x64'
 $activeOutputDir = $canonicalOutputDir
+$appVersion = (Get-Content -Path (Join-Path $desktopDir 'src-tauri\tauri.conf.json') -Raw | ConvertFrom-Json).version
 
 function Write-Step {
   param([string]$Message)
@@ -107,6 +108,19 @@ function Get-LatestArtifact {
   return $null
 }
 
+function Get-StagedArtifactName {
+  param([string]$ArtifactName)
+
+  switch -Regex ($ArtifactName) {
+    '^latest\.json$' { return 'latest.json' }
+    '\.msi\.zip\.sig$' { return "Claude-Code-Haha_${appVersion}_windows_x64_msi.msi.zip.sig" }
+    '\.msi\.zip$' { return "Claude-Code-Haha_${appVersion}_windows_x64_msi.msi.zip" }
+    '\.msi\.sig$' { return "Claude-Code-Haha_${appVersion}_windows_x64_msi.msi.sig" }
+    '\.msi$' { return "Claude-Code-Haha_${appVersion}_windows_x64_msi.msi" }
+    default { return $ArtifactName }
+  }
+}
+
 function Resolve-OutputDirectory {
   param([string]$PreferredPath)
 
@@ -181,7 +195,7 @@ $tauriBuildArgs = @(
   '--target',
   $targetTriple,
   '--bundles',
-  'nsis,msi',
+  'msi',
   '--ci'
 )
 
@@ -228,7 +242,7 @@ $bundleRoots = @(
   (Join-Path $tauriTargetDir 'release\bundle')
 )
 
-$artifactPatterns = @('*.exe', '*.msi', '*.zip', '*.sig', 'latest.json')
+$artifactPatterns = @('*.msi', '*.msi.sig', '*.msi.zip', '*.msi.zip.sig', 'latest.json')
 $copiedArtifacts = New-Object System.Collections.Generic.List[string]
 
 foreach ($root in $bundleRoots) {
@@ -239,7 +253,8 @@ foreach ($root in $bundleRoots) {
   foreach ($pattern in $artifactPatterns) {
     $artifacts = Get-ChildItem -Path $root -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue
     foreach ($artifact in $artifacts) {
-      $destination = Join-Path $activeOutputDir $artifact.Name
+      $destinationName = Get-StagedArtifactName -ArtifactName $artifact.Name
+      $destination = Join-Path $activeOutputDir $destinationName
       Copy-Item -LiteralPath $artifact.FullName -Destination $destination -Force
       if (-not $copiedArtifacts.Contains($destination)) {
         $copiedArtifacts.Add($destination) | Out-Null
@@ -248,25 +263,19 @@ foreach ($root in $bundleRoots) {
   }
 }
 
-$nsisInstaller = Get-LatestArtifact -SearchRoots @(
-  (Join-Path $tauriTargetDir "$targetTriple\release\bundle\nsis"),
-  (Join-Path $tauriTargetDir 'release\bundle\nsis')
-) -Patterns @('*.exe')
-
 $msiInstaller = Get-LatestArtifact -SearchRoots @(
   (Join-Path $tauriTargetDir "$targetTriple\release\bundle\msi"),
   (Join-Path $tauriTargetDir 'release\bundle\msi')
 ) -Patterns @('*.msi')
 
-$nsisInstallerPath = if ($nsisInstaller) { $nsisInstaller.FullName } else { 'not found' }
 $msiInstallerPath = if ($msiInstaller) { $msiInstaller.FullName } else { 'not found' }
 
 $buildInfo = @(
+  "App version: $appVersion"
   "Target triple: $targetTriple"
   "Canonical output: $canonicalOutputDir"
   "Actual output: $activeOutputDir"
-  "NSIS installer: $nsisInstallerPath"
-  "MSI installer: $msiInstallerPath"
+  "Windows installer (MSI): $msiInstallerPath"
   "Artifacts copied: $($copiedArtifacts.Count)"
   "Built at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
 )
@@ -276,12 +285,6 @@ Set-Content -Path (Join-Path $activeOutputDir 'BUILD_INFO.txt') -Value $buildInf
 Write-Host ''
 Write-Step 'Build finished.'
 Write-Step "Artifacts output: $activeOutputDir"
-if ($nsisInstaller) {
-  Write-Step "NSIS installer source: $($nsisInstaller.FullName)"
-} else {
-  Write-Step 'No NSIS installer found under bundle directories.'
-}
-
 if ($msiInstaller) {
   Write-Step "MSI installer source: $($msiInstaller.FullName)"
 } else {

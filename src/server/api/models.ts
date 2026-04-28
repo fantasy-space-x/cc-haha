@@ -100,28 +100,28 @@ async function handleModelsList(): Promise<Response> {
 
 async function handleCurrentModel(req: Request): Promise<Response> {
   if (req.method === 'GET') {
-    const settings = await settingsService.getUserSettings()
-    const explicitModel = (settings.model as string) || ''
-    const contextTier = (settings.modelContext as string) || undefined
-    const env = (settings.env as Record<string, string>) || {}
-
     // Build the full model list: prefer active provider's models, fall back to defaults
     const { providers, activeId } = await providerService.listProviders()
     const activeProvider = activeId ? providers.find((p) => p.id === activeId) : null
+    const settings = activeProvider
+      ? await providerService.getManagedSettings()
+      : await settingsService.getUserSettings()
+    const explicitModel = (settings.model as string) || ''
+    const contextTier = (settings.modelContext as string) || undefined
+    const env = (settings.env as Record<string, string>) || {}
 
     let currentModelId: string
     let currentModelName: string
 
     if (activeProvider) {
-      // Provider is active — use the model from env (set by syncToSettings when provider was activated)
-      // unless user explicitly set a different model ID in settings
+      // Provider is active — only use the provider-managed cc-haha settings.
+      // This avoids leaking global ~/.claude/settings.json model choices into
+      // the active provider flow.
       const providerEnvModel = env.ANTHROPIC_MODEL
-      if (providerEnvModel && (!explicitModel || explicitModel === DEFAULT_MODEL)) {
-        // No explicit model override — use the provider's configured model
+      if (providerEnvModel && !explicitModel) {
         currentModelId = providerEnvModel
         currentModelName = providerEnvModel
       } else {
-        // User explicitly set a model (possibly from the provider's model list)
         currentModelId = explicitModel || providerEnvModel || activeProvider.models.main
         currentModelName = currentModelId
       }
@@ -175,7 +175,12 @@ async function handleCurrentModel(req: Request): Promise<Response> {
       // Clear context tier when switching to a non-composite model
       updates.modelContext = undefined
     }
-    await settingsService.updateUserSettings(updates)
+    const { activeId } = await providerService.listProviders()
+    if (activeId) {
+      await providerService.updateManagedSettings(updates)
+    } else {
+      await settingsService.updateUserSettings(updates)
+    }
     return Response.json({ ok: true, model: modelId })
   }
 

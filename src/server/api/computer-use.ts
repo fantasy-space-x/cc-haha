@@ -21,6 +21,10 @@ import { DEFAULT_DESKTOP_GRANT_FLAGS } from '../../utils/computerUse/preauthoriz
 import MAC_HELPER_CONTENT from '../../../runtime/mac_helper.py' with { type: 'text' }
 // @ts-ignore — Bun text import
 import WIN_HELPER_CONTENT from '../../../runtime/win_helper.py' with { type: 'text' }
+// @ts-ignore — Bun text import
+import REQUIREMENTS_DARWIN from '../../../runtime/requirements.txt' with { type: 'text' }
+// @ts-ignore — Bun text import
+import REQUIREMENTS_WIN32 from '../../../runtime/requirements-win.txt' with { type: 'text' }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, '../../..')
@@ -29,24 +33,6 @@ const claudeHome = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const runtimeStateRoot = join(claudeHome, '.runtime')
 const venvRoot = join(runtimeStateRoot, 'venv')
 const installStampPath = join(runtimeStateRoot, 'requirements.sha256')
-
-// Embedded content of requirements — platform-specific.
-const REQUIREMENTS_DARWIN = `mss>=10.1.0
-Pillow>=11.3.0
-pyautogui>=0.9.54
-pyobjc-core>=11.1
-pyobjc-framework-Cocoa>=11.1
-pyobjc-framework-Quartz>=11.1
-`
-
-const REQUIREMENTS_WIN32 = `mss>=10.1.0
-Pillow>=11.3.0
-pyautogui>=0.9.54
-pywin32>=306
-psutil>=5.9.0
-pyperclip>=1.8.2
-screeninfo>=0.8.1
-`
 
 const isWindows = process.platform === 'win32'
 const REQUIREMENTS_CONTENT = isWindows ? REQUIREMENTS_WIN32 : REQUIREMENTS_DARWIN

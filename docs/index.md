@@ -6,7 +6,7 @@ hero:
   text: 本地可运行的 Claude Code
   tagline: 基于泄露源码修复，支持接入任意 Anthropic 兼容 API（MiniMax、OpenRouter 等）
   image:
-    src: /images/app-icon.png
+    src: /images/logo-horizontal.png
     alt: Claude Code Haha
   actions:
     - theme: brand

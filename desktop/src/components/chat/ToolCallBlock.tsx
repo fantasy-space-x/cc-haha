@@ -51,7 +51,7 @@ export function ToolCallBlock({ toolName, input, result, compact = false }: Prop
 
   return (
     <div className={`overflow-hidden rounded-lg border border-[var(--color-border)]/50 bg-[var(--color-surface-container-lowest)] ${
-      compact ? 'mb-0' : 'mb-2 ml-10'
+      compact ? 'mb-0' : 'mb-2'
     }`}>
       <button
         type="button"

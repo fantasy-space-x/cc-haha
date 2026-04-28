@@ -7,10 +7,16 @@ export function isTauriRuntime() {
 
 export async function initializeDesktopServerUrl() {
   const fallbackUrl = getDefaultBaseUrl()
+  const queryUrl =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('serverUrl')
+      : null
+  const requestedUrl = queryUrl?.trim() || fallbackUrl
 
   if (!isTauriRuntime()) {
-    setBaseUrl(fallbackUrl)
-    return fallbackUrl
+    setBaseUrl(requestedUrl)
+    await waitForHealth(requestedUrl)
+    return requestedUrl
   }
 
   try {

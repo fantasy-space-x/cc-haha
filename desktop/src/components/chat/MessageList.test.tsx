@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MessageList, buildRenderModel } from './MessageList'
+import { sessionsApi } from '../../api/sessions'
 import { useChatStore } from '../../stores/chatStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useTabStore } from '../../stores/tabStore'
 import type { UIMessage } from '../../types/chat'
 import type { PerSessionState } from '../../stores/chatStore'
@@ -26,12 +28,15 @@ function makeSessionState(overrides: Partial<PerSessionState> = {}): PerSessionS
     slashCommands: [],
     agentTaskNotifications: {},
     elapsedTimer: null,
+    composerPrefill: null,
     ...overrides,
   }
 }
 
 describe('MessageList nested tool calls', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
+    useSettingsStore.setState({ locale: 'en' })
     useTabStore.setState({ activeTabId: ACTIVE_TAB, tabs: [{ sessionId: ACTIVE_TAB, title: 'Test', type: 'session' as const, status: 'idle' }] })
     useChatStore.setState({ sessions: { [ACTIVE_TAB]: makeSessionState() } })
   })
@@ -124,7 +129,7 @@ describe('MessageList nested tool calls', () => {
     expect(toolGroups.map((item) => item.toolCalls[0]?.toolUseId)).toEqual(['agent-1', 'write-1'])
   })
 
-  it('keeps later nested tool calls after an interleaved user message', () => {
+  it('keeps later nested tool calls under their parent after an interleaved user message', () => {
     const messages: UIMessage[] = [
       {
         id: 'tool-agent',
@@ -170,11 +175,37 @@ describe('MessageList nested tool calls', () => {
     expect(renderedKinds).toEqual([
       'tool:agent-1',
       'message:user-follow-up',
-      'tool:write-1',
     ])
     expect(
       (childToolCallsByParent.get('agent-1') ?? []).map((toolCall) => toolCall.toolUseId),
-    ).toEqual(['read-1'])
+    ).toEqual(['read-1', 'write-1'])
+  })
+
+  it('does not render parented orphan tool results as root session messages', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'tool-agent',
+        type: 'tool_use',
+        toolName: 'Agent',
+        toolUseId: 'agent-1',
+        input: { description: 'Inspect src/components' },
+        timestamp: 1,
+      },
+      {
+        id: 'result-child',
+        type: 'tool_result',
+        toolUseId: 'grep-1',
+        content: 'Found 22 files',
+        isError: false,
+        timestamp: 2,
+        parentToolUseId: 'agent-1',
+      },
+    ]
+
+    const { renderItems } = buildRenderModel(messages)
+
+    expect(renderItems).toHaveLength(1)
+    expect(renderItems[0]).toMatchObject({ kind: 'tool_group' })
   })
 
   it('shows failed agent status and compact unavailable summary for Explore launch errors', () => {
@@ -230,7 +261,13 @@ describe('MessageList nested tool calls', () => {
               toolUseId: 'agent-1',
               content: {
                 status: 'completed',
-                content: [{ type: 'text', text: longResult }],
+                content: [
+                  { type: 'text', text: longResult },
+                  {
+                    type: 'text',
+                    text: "agentId: a0c0c732f61442dc1 (use SendMessage with to: 'a0c0c732f61442dc1' to continue this agent)\n<usage>total_tokens: 17195\ntool_uses: 2\nduration_ms: 41368</usage>",
+                  },
+                ],
               },
               isError: false,
               timestamp: 2,
@@ -249,6 +286,8 @@ describe('MessageList nested tool calls', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText(/第二段补充内容用于验证 dialog 展示的是完整结果而不是截断摘要。/)).toBeTruthy()
+    expect(within(dialog).queryByText(/agentId:/)).toBeNull()
+    expect(within(dialog).queryByText(/total_tokens/)).toBeNull()
     expect(screen.getByRole('button', { name: 'Close dialog' })).toBeTruthy()
   })
 
@@ -333,6 +372,314 @@ describe('MessageList nested tool calls', () => {
     expect(writeText).not.toHaveBeenCalledWith(
       '先看 CLI 和服务端入口。\n再看 desktop 前后端边界。'
     )
+  })
+
+  it('does not force-scroll to the bottom while the user is reading history', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          chatState: 'streaming',
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: '历史消息',
+              timestamp: 1,
+            },
+          ],
+          streamingText: 'streaming',
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    let scrollTop = 120
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value
+      },
+    })
+
+    scrollIntoView.mockClear()
+    fireEvent.scroll(scroller)
+
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [ACTIVE_TAB]: {
+            ...state.sessions[ACTIVE_TAB]!,
+            streamingText: 'streaming new token',
+          },
+        },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('streaming new token')).toBeTruthy()
+    })
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('keeps auto-scrolling when new output arrives while already near the bottom', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          chatState: 'streaming',
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: '最新消息',
+              timestamp: 1,
+            },
+          ],
+          streamingText: 'streaming',
+        }),
+      },
+    })
+
+    const { container } = render(<MessageList />)
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLDivElement
+    let scrollTop = 552
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 })
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value) => {
+        scrollTop = value
+      },
+    })
+
+    scrollIntoView.mockClear()
+    fireEvent.scroll(scroller)
+
+    act(() => {
+      useChatStore.setState((state) => ({
+        sessions: {
+          ...state.sessions,
+          [ACTIVE_TAB]: {
+            ...state.sessions[ACTIVE_TAB]!,
+            streamingText: 'streaming next token',
+          },
+        },
+      }))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('streaming next token')).toBeTruthy()
+    })
+    expect(scrollIntoView).toHaveBeenCalled()
+  })
+
+  it('keeps user actions anchored to the right bubble and assistant actions to the left bubble', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: '请把这条 prompt 放在右侧',
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-1',
+              type: 'assistant_text',
+              content: '这条回复应该停在左侧。',
+              timestamp: 2,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const userShell = screen.getByText('请把这条 prompt 放在右侧').closest('[data-message-shell="user"]')
+    const assistantShell = screen.getByText('这条回复应该停在左侧。').closest('[data-message-shell="assistant"]')
+    const userActions = screen.getByRole('button', { name: 'Copy prompt' }).closest('[data-message-actions]')
+    const assistantActions = screen.getByRole('button', { name: 'Copy reply' }).closest('[data-message-actions]')
+
+    expect(userShell).toBeTruthy()
+    expect(userShell?.className).toContain('items-end')
+    expect(assistantShell).toBeTruthy()
+    expect(assistantShell?.className).toContain('items-start')
+    expect(assistantShell?.className).not.toContain('ml-10')
+    expect(userActions?.getAttribute('data-align')).toBe('end')
+    expect(assistantActions?.getAttribute('data-align')).toBe('start')
+  })
+
+  it('uses the document column for markdown-heavy assistant replies', () => {
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'assistant-doc',
+              type: 'assistant_text',
+              content: [
+                '## 交付结果',
+                '',
+                '已完成以下内容：',
+                '',
+                '- 添加任务',
+                '- 删除任务',
+                '',
+                '```bash',
+                'npm run build',
+                '```',
+              ].join('\n'),
+              timestamp: 1,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const assistantShell = screen.getByText('交付结果').closest('[data-message-shell="assistant"]')
+    expect(assistantShell?.getAttribute('data-layout')).toBe('document')
+    expect(assistantShell?.className).toContain('w-full')
+    expect(assistantShell?.className).not.toContain('ml-10')
+  })
+
+  it('opens a rewind preview modal for user messages', async () => {
+    vi.spyOn(sessionsApi, 'rewind').mockResolvedValue({
+      target: {
+        targetUserMessageId: 'user-1',
+        userMessageIndex: 0,
+        userMessageCount: 1,
+      },
+      conversation: {
+        messagesRemoved: 2,
+      },
+      code: {
+        available: true,
+        filesChanged: ['src/example.ts'],
+        insertions: 6,
+        deletions: 2,
+      },
+    })
+
+    useChatStore.setState({
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: '回到这一步重做',
+              timestamp: 1,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rewind to here' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Rewind Conversation')).toBeTruthy()
+    expect(within(dialog).getByText('回到这一步重做')).toBeTruthy()
+    expect(within(dialog).getByText('src/example.ts')).toBeTruthy()
+    expect(sessionsApi.rewind).toHaveBeenCalledWith(ACTIVE_TAB, {
+      targetUserMessageId: 'user-1',
+      userMessageIndex: 0,
+      expectedContent: '回到这一步重做',
+      dryRun: true,
+    })
+  })
+
+  it('confirms rewind with the selected message id and prompt guard', async () => {
+    vi.spyOn(sessionsApi, 'rewind').mockResolvedValue({
+      target: {
+        targetUserMessageId: 'user-2',
+        userMessageIndex: 1,
+        userMessageCount: 2,
+      },
+      conversation: {
+        messagesRemoved: 2,
+      },
+      code: {
+        available: false,
+        filesChanged: [],
+        insertions: 0,
+        deletions: 0,
+      },
+    })
+    const reloadHistory = vi.fn().mockResolvedValue(undefined)
+    const queueComposerPrefill = vi.fn()
+
+    useChatStore.setState({
+      reloadHistory,
+      queueComposerPrefill,
+      sessions: {
+        [ACTIVE_TAB]: makeSessionState({
+          messages: [
+            {
+              id: 'user-1',
+              type: 'user_text',
+              content: '第一段',
+              timestamp: 1,
+            },
+            {
+              id: 'assistant-1',
+              type: 'assistant_text',
+              content: 'ok',
+              timestamp: 2,
+            },
+            {
+              id: 'user-2',
+              type: 'user_text',
+              content: '第二段',
+              timestamp: 3,
+            },
+          ],
+        }),
+      },
+    })
+
+    render(<MessageList />)
+
+    const buttons = screen.getAllByRole('button', { name: 'Rewind to here' })
+    fireEvent.click(buttons[1]!)
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: /Rewind here/ }))
+
+    await waitFor(() => {
+      expect(sessionsApi.rewind).toHaveBeenLastCalledWith(ACTIVE_TAB, {
+        targetUserMessageId: 'user-2',
+        userMessageIndex: 1,
+        expectedContent: '第二段',
+      })
+    })
+    expect(reloadHistory).toHaveBeenCalledWith(ACTIVE_TAB)
+    expect(queueComposerPrefill).toHaveBeenCalledWith(ACTIVE_TAB, {
+      text: '第二段',
+      attachments: undefined,
+    })
   })
 
   it('shows raw startup details under translated CLI startup errors', () => {

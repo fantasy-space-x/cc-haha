@@ -15,11 +15,11 @@ bun run tauri dev
 # macOS (Apple Silicon)
 ./scripts/build-macos-arm64.sh
 
-# Windows (x64)
+# Windows (x64, MSI only)
 .\scripts\build-windows-x64.ps1
 ```
 
-构建产物位于 `build-artifacts/` 目录。
+构建产物位于 `build-artifacts/` 目录，文件名会显式包含平台、架构和包类型。
 
 ## 常见问题
 

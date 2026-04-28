@@ -40,29 +40,41 @@ export function deriveTitle(raw: string): string | undefined {
 }
 
 /**
- * Generate an AI title using the active provider's Haiku model.
+ * Generate an AI title using the session's provider Haiku model when possible.
  * Fire-and-forget — returns null on any failure.
  */
-export async function generateTitle(conversationText: string): Promise<string | null> {
+export async function generateTitle(
+  conversationText: string,
+  providerId?: string | null,
+): Promise<string | null> {
   const trimmed = conversationText.trim()
   if (!trimmed) return null
 
   try {
     const providerService = new ProviderService()
-    const { activeId, providers } = await providerService.listProviders()
-    if (!activeId) return null
+    if (providerId === null) return null
 
-    const provider = providers.find((p) => p.id === activeId)
-    if (!provider?.baseUrl || !provider?.apiKey) return null
+    let resolvedProvider = providerId
+      ? await providerService.getProvider(providerId)
+      : null
 
-    const model = provider.models.haiku || provider.models.main
-    const url = `${provider.baseUrl.replace(/\/+$/, '')}/v1/messages`
+    if (!resolvedProvider) {
+      const { activeId, providers } = await providerService.listProviders()
+      resolvedProvider = activeId
+        ? providers.find((provider) => provider.id === activeId) ?? null
+        : null
+    }
+
+    if (!resolvedProvider?.baseUrl || !resolvedProvider?.apiKey) return null
+
+    const model = resolvedProvider.models.haiku || resolvedProvider.models.main
+    const url = `${resolvedProvider.baseUrl.replace(/\/+$/, '')}/v1/messages`
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': provider.apiKey,
+        'x-api-key': resolvedProvider.apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({

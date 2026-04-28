@@ -27,7 +27,7 @@ export function ToolResultBlock({ content, isError, toolName, standalone = true 
   const hasMore = text.length > 200
 
   return (
-    <div className={`mb-2 ml-10 overflow-hidden rounded-xl border ${
+    <div className={`mb-2 overflow-hidden rounded-xl border ${
       isError
         ? 'border-[var(--color-error)]/20'
         : 'border-[var(--color-outline-variant)]/20'

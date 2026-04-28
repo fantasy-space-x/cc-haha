@@ -17,18 +17,21 @@
  * launcher-only 参数。
  */
 
+import { parseLauncherArgs, resolveSidecarInvocation } from './launcherRouting'
+
 const rawArgs = process.argv.slice(2)
-if (rawArgs.length === 0) {
+const invocation = resolveSidecarInvocation(rawArgs)
+if (!invocation.mode) {
   console.error('claude-sidecar: missing mode argument (expected "server", "cli" or "adapters")')
   process.exit(2)
 }
-const mode = rawArgs[0]!
-const restArgs = rawArgs.slice(1)
+const mode = invocation.mode
+const restArgs = invocation.restArgs
 
 if (mode === 'adapters') {
   await runAdapters(restArgs)
 } else {
-  const { appRoot, args } = parseLauncherArgs(restArgs)
+  const { appRoot, args } = parseLauncherArgs(restArgs, invocation.defaultAppRoot)
 
   process.env.CLAUDE_APP_ROOT = appRoot
   process.env.CALLER_DIR ||= process.cwd()
@@ -132,25 +135,4 @@ async function runAdapters(rawArgs: string[]): Promise<void> {
   // 让进程保持存活：两个 adapter 都通过 long-lived WebSocket（Lark WSClient
   // / grammY long-polling）持有 event loop，自然不会退出。这里不需要额外
   // setInterval 兜底。两个 adapter 自己注册的 SIGINT handler 都会触发。
-}
-
-function parseLauncherArgs(rawArgs: string[]): { appRoot: string; args: string[] } {
-  const nextArgs: string[] = []
-  let appRoot: string | null = process.env.CLAUDE_APP_ROOT ?? null
-
-  for (let index = 0; index < rawArgs.length; index++) {
-    const arg = rawArgs[index]
-    if (arg === '--app-root') {
-      appRoot = rawArgs[index + 1] ?? null
-      index += 1
-      continue
-    }
-    nextArgs.push(arg!)
-  }
-
-  if (!appRoot) {
-    throw new Error('Missing --app-root for claude-sidecar')
-  }
-
-  return { appRoot, args: nextArgs }
 }

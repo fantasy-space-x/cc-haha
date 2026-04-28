@@ -3,13 +3,14 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useProviderStore } from '../stores/providerStore'
 import { useTranslation } from '../i18n'
 import { Modal } from '../components/shared/Modal'
+import { ConfirmDialog } from '../components/shared/ConfirmDialog'
 import { Input } from '../components/shared/Input'
 import { Button } from '../components/shared/Button'
+import { Dropdown } from '../components/shared/Dropdown'
 import type { PermissionMode, EffortLevel, ThemeMode } from '../types/settings'
 import type { Locale } from '../i18n'
-import { PROVIDER_PRESETS } from '../config/providerPresets'
-import type { ProviderPreset } from '../config/providerPresets'
 import type { SavedProvider, UpdateProviderInput, ProviderTestResult, ModelMapping, ApiFormat } from '../types/provider'
+import type { ProviderPreset } from '../types/providerPreset'
 import { AdapterSettings } from './AdapterSettings'
 import { useAgentStore } from '../stores/agentStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -18,10 +19,17 @@ import { MarkdownRenderer } from '../components/markdown/MarkdownRenderer'
 import { useSkillStore } from '../stores/skillStore'
 import { SkillList } from '../components/skills/SkillList'
 import { SkillDetail } from '../components/skills/SkillDetail'
+import { usePluginStore } from '../stores/pluginStore'
+import { PluginList } from '../components/plugins/PluginList'
+import { PluginDetail } from '../components/plugins/PluginDetail'
 import { ComputerUseSettings } from './ComputerUseSettings'
+import { McpSettings } from './McpSettings'
+import { TerminalSettings } from './TerminalSettings'
 import { useUIStore, type SettingsTab } from '../stores/uiStore'
 import { ClaudeOfficialLogin } from '../components/settings/ClaudeOfficialLogin'
 import { useUpdateStore } from '../stores/updateStore'
+import { formatBytes } from '../lib/formatBytes'
+import { isTauriRuntime } from '../lib/desktopRuntime'
 
 export function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('providers')
@@ -44,8 +52,11 @@ export function Settings() {
             <TabButton icon="shield" label={t('settings.tab.permissions')} active={activeTab === 'permissions'} onClick={() => setActiveTab('permissions')} />
             <TabButton icon="tune" label={t('settings.tab.general')} active={activeTab === 'general'} onClick={() => setActiveTab('general')} />
             <TabButton icon="chat" label={t('settings.tab.adapters')} active={activeTab === 'adapters'} onClick={() => setActiveTab('adapters')} />
+            <TabButton icon="terminal" label={t('settings.tab.terminal')} active={activeTab === 'terminal'} onClick={() => setActiveTab('terminal')} />
+            <TabButton icon="dns" label={t('settings.tab.mcp')} active={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')} />
             <TabButton icon="smart_toy" label={t('settings.tab.agents')} active={activeTab === 'agents'} onClick={() => setActiveTab('agents')} />
             <TabButton icon="auto_awesome" label={t('settings.tab.skills')} active={activeTab === 'skills'} onClick={() => setActiveTab('skills')} />
+            <TabButton icon="extension" label={t('settings.tab.plugins')} active={activeTab === 'plugins'} onClick={() => setActiveTab('plugins')} />
             <TabButton icon="mouse" label={t('settings.tab.computerUse')} active={activeTab === 'computerUse'} onClick={() => setActiveTab('computerUse')} />
           </div>
           <div className="border-t border-[var(--color-border)]/40 pt-1">
@@ -59,8 +70,11 @@ export function Settings() {
           {activeTab === 'permissions' && <PermissionSettings />}
           {activeTab === 'general' && <GeneralSettings />}
           {activeTab === 'adapters' && <AdapterSettings />}
+          {activeTab === 'terminal' && <TerminalSettings />}
+          {activeTab === 'mcp' && <McpSettings />}
           {activeTab === 'agents' && <AgentsSettings />}
           {activeTab === 'skills' && <SkillSettings />}
+          {activeTab === 'plugins' && <PluginSettings />}
           {activeTab === 'computerUse' && <ComputerUseSettings />}
           {activeTab === 'about' && <AboutSettings />}
         </div>
@@ -88,19 +102,54 @@ function TabButton({ icon, label, active, onClick }: { icon: string; label: stri
 // ─── Provider Settings ──────────────────────────────────────
 
 function ProviderSettings() {
-  const { providers, activeId, isLoading, fetchProviders, deleteProvider, activateProvider, activateOfficial, testProvider } = useProviderStore()
+  const {
+    providers,
+    activeId,
+    hasLoadedProviders,
+    presets,
+    isLoading,
+    isPresetsLoading,
+    fetchProviders,
+    fetchPresets,
+    deleteProvider,
+    activateProvider,
+    activateOfficial,
+    testProvider,
+  } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
   const [editingProvider, setEditingProvider] = useState<SavedProvider | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [pendingDeleteProvider, setPendingDeleteProvider] = useState<SavedProvider | null>(null)
+  const [isDeletingProvider, setIsDeletingProvider] = useState(false)
   const [testResults, setTestResults] = useState<Record<string, { loading: boolean; result?: ProviderTestResult }>>({})
 
-  useEffect(() => { fetchProviders() }, [fetchProviders])
+  useEffect(() => {
+    void fetchProviders()
+    void fetchPresets()
+  }, [fetchPresets, fetchProviders])
+
+  const presetMap = useMemo(
+    () => new Map(presets.map((preset) => [preset.id, preset])),
+    [presets],
+  )
 
   const handleDelete = async (provider: SavedProvider) => {
     if (activeId === provider.id) return
-    if (!window.confirm(t('settings.providers.confirmDelete', { name: provider.name }))) return
-    await deleteProvider(provider.id).catch(console.error)
+    setPendingDeleteProvider(provider)
+  }
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteProvider) return
+    setIsDeletingProvider(true)
+    try {
+      await deleteProvider(pendingDeleteProvider.id)
+      setPendingDeleteProvider(null)
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setIsDeletingProvider(false)
+    }
   }
 
   const handleTest = async (provider: SavedProvider) => {
@@ -123,7 +172,7 @@ function ProviderSettings() {
     await fetchSettings()
   }
 
-  const isOfficialActive = activeId === null
+  const isOfficialActive = hasLoadedProviders && activeId === null
 
   return (
     <div className="max-w-2xl">
@@ -132,7 +181,7 @@ function ProviderSettings() {
           <h2 className="text-base font-semibold text-[var(--color-text-primary)]">{t('settings.providers.title')}</h2>
           <p className="text-sm text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.description')}</p>
         </div>
-        <Button size="sm" onClick={() => setShowCreateModal(true)}>
+        <Button size="sm" onClick={() => setShowCreateModal(true)} disabled={isPresetsLoading || presets.length === 0}>
           <span className="material-symbols-outlined text-[16px]">add</span>
           {t('settings.providers.addProvider')}
         </Button>
@@ -155,7 +204,7 @@ function ProviderSettings() {
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-[var(--color-text-primary)]">{t('settings.providers.officialName')}</span>
               {isOfficialActive && (
-                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('common.active')}</span>
+                <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
               )}
             </div>
             <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">{t('settings.providers.officialDesc')}</div>
@@ -179,7 +228,7 @@ function ProviderSettings() {
           {providers.map((provider) => {
             const isActive = activeId === provider.id
             const test = testResults[provider.id]
-            const preset = PROVIDER_PRESETS.find((p) => p.id === provider.presetId)
+            const preset = presetMap.get(provider.presetId)
             return (
               <div
                 key={provider.id}
@@ -202,7 +251,7 @@ function ProviderSettings() {
                       </span>
                     )}
                     {isActive && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('common.active')}</span>
+                      <span className="px-1.5 py-0.5 text-[10px] font-bold rounded border border-[var(--color-brand)]/18 bg-[var(--color-brand)]/14 text-[var(--color-brand)] leading-none">{t('settings.providers.default')}</span>
                     )}
                   </div>
                   <div className="text-xs text-[var(--color-text-tertiary)] truncate mt-0.5">
@@ -227,7 +276,7 @@ function ProviderSettings() {
                 </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                   {!isActive && (
-                    <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.activate')}</Button>
+                    <Button variant="ghost" size="sm" onClick={() => handleActivate(provider.id)}>{t('settings.providers.setDefault')}</Button>
                   )}
                   <Button variant="ghost" size="sm" onClick={() => handleTest(provider)} loading={test?.loading}>{t('settings.providers.test')}</Button>
                   <Button variant="ghost" size="sm" onClick={() => setEditingProvider(provider)}>{t('settings.providers.edit')}</Button>
@@ -243,13 +292,28 @@ function ProviderSettings() {
 
       {/* Create Modal — conditionally rendered so state resets on close */}
       {showCreateModal && (
-        <ProviderFormModal open={true} onClose={() => setShowCreateModal(false)} mode="create" />
+        <ProviderFormModal open={true} onClose={() => setShowCreateModal(false)} mode="create" presets={presets} />
       )}
 
       {/* Edit Modal */}
       {editingProvider && (
-        <ProviderFormModal key={editingProvider.id} open={true} onClose={() => setEditingProvider(null)} mode="edit" provider={editingProvider} />
+        <ProviderFormModal key={editingProvider.id} open={true} onClose={() => setEditingProvider(null)} mode="edit" provider={editingProvider} presets={presets} />
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteProvider !== null}
+        onClose={() => {
+          if (isDeletingProvider) return
+          setPendingDeleteProvider(null)
+        }}
+        onConfirm={confirmDelete}
+        title={t('common.delete')}
+        body={pendingDeleteProvider ? t('settings.providers.confirmDelete', { name: pendingDeleteProvider.name }) : ''}
+        confirmLabel={t('common.delete')}
+        cancelLabel={t('common.cancel')}
+        confirmVariant="danger"
+        loading={isDeletingProvider}
+      />
     </div>
   )
 }
@@ -261,6 +325,7 @@ type ProviderFormProps = {
   onClose: () => void
   mode: 'create' | 'edit'
   provider?: SavedProvider
+  presets: ProviderPreset[]
 }
 
 function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
@@ -270,15 +335,44 @@ function requirePreset(preset: ProviderPreset | undefined): ProviderPreset {
   return preset
 }
 
-function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps) {
+function buildFallbackPreset(provider?: SavedProvider): ProviderPreset {
+  return {
+    id: provider?.presetId ?? 'custom',
+    name: provider?.name ?? 'Custom',
+    baseUrl: provider?.baseUrl ?? '',
+    apiFormat: provider?.apiFormat ?? 'anthropic',
+    defaultModels: provider?.models ?? { main: '', haiku: '', sonnet: '', opus: '' },
+    needsApiKey: true,
+    websiteUrl: '',
+  }
+}
+
+function openExternalUrl(url: string) {
+  if (!isTauriRuntime()) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+    return
+  }
+
+  void import('@tauri-apps/plugin-shell')
+    .then((mod) => mod.open(url))
+    .catch(() => window.open(url, '_blank', 'noopener,noreferrer'))
+}
+
+function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderFormProps) {
   const { createProvider, updateProvider, testConfig } = useProviderStore()
   const fetchSettings = useSettingsStore((s) => s.fetchAll)
   const t = useTranslation()
 
-  const availablePresets = PROVIDER_PRESETS.filter((p) => p.id !== 'official')
-  const fallbackPreset = requirePreset(
-    availablePresets[availablePresets.length - 1] ?? PROVIDER_PRESETS[0],
+  const availablePresets = presets.filter((p) => p.id !== 'official')
+  const regularPresets = availablePresets.filter((p) => !p.featured)
+  const featuredPresets = availablePresets.filter((p) => p.featured)
+  const presetDefaultEnvKeys = useMemo(
+    () => new Set(presets.flatMap((preset) => Object.keys(preset.defaultEnv ?? {}))),
+    [presets],
   )
+  const fallbackPreset = provider
+    ? buildFallbackPreset(provider)
+    : requirePreset(availablePresets[availablePresets.length - 1])
   const initialPreset = requirePreset(
     provider
       ? availablePresets.find((p) => p.id === provider.presetId) ?? fallbackPreset
@@ -289,7 +383,8 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
   const [name, setName] = useState(provider?.name ?? initialPreset.name)
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? initialPreset.baseUrl)
   const [apiFormat, setApiFormat] = useState<ApiFormat>(provider?.apiFormat ?? initialPreset.apiFormat ?? 'anthropic')
-  const [apiKey, setApiKey] = useState('')
+  const [apiKey, setApiKey] = useState(provider?.apiKey ?? '')
+  const [showApiKey, setShowApiKey] = useState(false)
   const [notes, setNotes] = useState(provider?.notes ?? '')
   const [models, setModels] = useState<ModelMapping>(provider?.models ?? { ...initialPreset.defaultModels })
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -306,16 +401,23 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
       jsonPastedRef.current = false
       return
     }
-    import('../api/settings').then(({ settingsApi }) => {
-      settingsApi.getUser().then((settings) => {
+    import('../api/providers').then(({ providersApi }) => {
+      providersApi.getSettings().then((settings) => {
         const needsProxy = apiFormat !== 'anthropic'
+        const existingEnv = (settings.env as Record<string, string>) || {}
+        const cleanedEnv = Object.fromEntries(
+          Object.entries(existingEnv).filter(([key]) => !presetDefaultEnvKeys.has(key)),
+        )
         const merged = {
           ...settings,
           skipWebFetchPreflight: settings.skipWebFetchPreflight ?? true,
           env: {
-            ...((settings.env as Record<string, string>) || {}),
+            ...cleanedEnv,
+            ...(selectedPreset.defaultEnv ?? {}),
             ANTHROPIC_BASE_URL: needsProxy ? 'http://127.0.0.1:3456/proxy' : baseUrl,
-            ANTHROPIC_AUTH_TOKEN: needsProxy ? 'proxy-managed' : (apiKey || '(your API key)'),
+            ANTHROPIC_AUTH_TOKEN: needsProxy
+              ? 'proxy-managed'
+              : (apiKey || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || (selectedPreset.needsApiKey ? '(your API key)' : '')),
             ANTHROPIC_MODEL: models.main,
             ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
             ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
@@ -340,18 +442,53 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
   }
 
   const isCustom = selectedPreset.id === 'custom'
-  const canSubmit = name.trim() && baseUrl.trim() && (mode === 'edit' || apiKey.trim()) && models.main.trim() && !settingsJsonError
+  const requiresApiKey = selectedPreset.needsApiKey !== false
+  const canSubmit = name.trim() && baseUrl.trim() && (mode === 'edit' || !requiresApiKey || apiKey.trim()) && models.main.trim() && !settingsJsonError
+  const apiKeyUrl = selectedPreset.apiKeyUrl?.trim()
+  const promoText = selectedPreset.promoText?.trim()
+  const apiFormatItems = [
+    {
+      value: 'anthropic' as const,
+      label: t('settings.providers.apiFormatAnthropic'),
+      icon: <span className="material-symbols-outlined text-[17px]">hub</span>,
+    },
+    {
+      value: 'openai_chat' as const,
+      label: t('settings.providers.apiFormatOpenaiChat'),
+      icon: <span className="material-symbols-outlined text-[17px]">forum</span>,
+    },
+    {
+      value: 'openai_responses' as const,
+      label: t('settings.providers.apiFormatOpenaiResponses'),
+      icon: <span className="material-symbols-outlined text-[17px]">route</span>,
+    },
+  ]
+  const selectedApiFormatLabel = apiFormatItems.find((item) => item.value === apiFormat)?.label ?? t('settings.providers.apiFormatAnthropic')
+  const renderPresetButton = (preset: ProviderPreset) => (
+    <button
+      key={preset.id}
+      onClick={() => handlePresetChange(preset)}
+      className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all ${
+        selectedPreset.id === preset.id
+          ? 'border-[var(--color-brand)] bg-[var(--color-surface-container-high)] text-[var(--color-brand)] shadow-[var(--shadow-focus-ring)]'
+          : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
+      }`}
+    >
+      {preset.name}
+    </button>
+  )
 
   const handleSubmit = async () => {
     if (!canSubmit) return
     setIsSubmitting(true)
     try {
-      // Write the edited settings.json first (for all presets including official)
+      // Write the edited cc-haha settings.json first so provider-specific model
+      // settings never conflict with the user's global ~/.claude/settings.json.
       if (settingsJson.trim()) {
         try {
           const parsed = JSON.parse(settingsJson)
-          const { settingsApi } = await import('../api/settings')
-          await settingsApi.updateUser(parsed)
+          const { providersApi } = await import('../api/providers')
+          await providersApi.updateSettings(parsed)
         } catch {
           // JSON validation already prevents this
         }
@@ -400,8 +537,13 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
           apiFormat,
         })
       } else {
-        if (!apiKey.trim()) return
-        result = await testConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), modelId: models.main.trim(), apiFormat })
+        if (requiresApiKey && !apiKey.trim()) return
+        result = await testConfig({
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey.trim() || selectedPreset.defaultEnv?.ANTHROPIC_AUTH_TOKEN || 'local',
+          modelId: models.main.trim(),
+          apiFormat,
+        })
       }
       setTestResult(result)
     } catch {
@@ -431,20 +573,15 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
         {mode === 'create' && (
           <div>
             <label className="text-sm font-medium text-[var(--color-text-primary)] mb-2 block">{t('settings.providers.preset')}</label>
-            <div className="flex flex-wrap gap-2">
-              {availablePresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  onClick={() => handlePresetChange(preset)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all ${
-                    selectedPreset.id === preset.id
-                      ? 'border-[var(--color-brand)] bg-[var(--color-surface-container-high)] text-[var(--color-brand)] shadow-[var(--shadow-focus-ring)]'
-                      : 'border-[var(--color-border)] text-[var(--color-text-secondary)] hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)]'
-                  }`}
-                >
-                  {preset.name}
-                </button>
-              ))}
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-2">
+                {regularPresets.map(renderPresetButton)}
+              </div>
+              {featuredPresets.length > 0 && (
+                <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)]/60 pt-2">
+                  {featuredPresets.map(renderPresetButton)}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -453,31 +590,28 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
 
         <Input label={t('settings.providers.notes')} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('settings.providers.notesPlaceholder')} />
 
-        {/* Base URL */}
-        {isCustom || mode === 'edit' ? (
-          <Input label={t('settings.providers.baseUrl')} required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} />
-        ) : (
-          <div>
-            <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.baseUrl')}</label>
-            <div className="text-xs text-[var(--color-text-tertiary)] px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)]">
-              {baseUrl}
-            </div>
-          </div>
-        )}
+        <Input label={t('settings.providers.baseUrl')} required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} />
 
         {/* API Format */}
         {(isCustom || mode === 'edit') ? (
           <div>
             <label className="text-sm font-medium text-[var(--color-text-primary)] mb-1 block">{t('settings.providers.apiFormat')}</label>
-            <select
+            <Dropdown<ApiFormat>
+              items={apiFormatItems}
               value={apiFormat}
-              onChange={(e) => setApiFormat(e.target.value as ApiFormat)}
-              className="w-full text-sm px-3 py-2 rounded-[var(--radius-md)] bg-[var(--color-surface-container-low)] border border-[var(--color-border)] text-[var(--color-text-primary)] outline-none focus:border-[var(--color-border-focus)]"
-            >
-              <option value="anthropic">{t('settings.providers.apiFormatAnthropic')}</option>
-              <option value="openai_chat">{t('settings.providers.apiFormatOpenaiChat')}</option>
-              <option value="openai_responses">{t('settings.providers.apiFormatOpenaiResponses')}</option>
-            </select>
+              onChange={setApiFormat}
+              width="100%"
+              className="block w-full"
+              trigger={
+                <button
+                  type="button"
+                  className="flex h-10 w-full items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-left text-sm text-[var(--color-text-primary)] outline-none transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-container-low)] focus-visible:border-[var(--color-border-focus)] focus-visible:shadow-[var(--shadow-focus-ring)]"
+                >
+                  <span className="min-w-0 flex-1 truncate">{selectedApiFormatLabel}</span>
+                  <span className="material-symbols-outlined flex-shrink-0 text-[18px] text-[var(--color-text-secondary)]">expand_more</span>
+                </button>
+              }
+            />
             {apiFormat !== 'anthropic' && (
               <p className="text-[11px] text-[var(--color-text-tertiary)] mt-1">{t('settings.providers.proxyHint')}</p>
             )}
@@ -491,14 +625,62 @@ function ProviderFormModal({ open, onClose, mode, provider }: ProviderFormProps)
           </div>
         ) : null}
 
-        <Input
-          label={mode === 'edit' ? t('settings.providers.apiKeyKeep') : t('settings.providers.apiKey')}
-          required={mode === 'create'}
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={mode === 'edit' ? '****' : 'sk-...'}
-        />
+        <div className="flex flex-col gap-1">
+          <label htmlFor="provider-api-key" className="text-sm font-medium text-[var(--color-text-primary)]">
+            {t('settings.providers.apiKey')}
+            {mode === 'create' && requiresApiKey && <span className="text-[var(--color-error)] ml-0.5">*</span>}
+          </label>
+          <div className="relative">
+            <input
+              id="provider-api-key"
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="sk-..."
+              className="h-10 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 pr-10 text-sm text-[var(--color-text-primary)] outline-none transition-colors duration-150 placeholder:text-[var(--color-text-tertiary)] focus:border-[var(--color-border-focus)] focus:shadow-[var(--shadow-focus-ring)]"
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey((visible) => !visible)}
+              aria-label={showApiKey ? 'Hide API Key' : 'Show API Key'}
+              className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                {showApiKey ? 'visibility_off' : 'visibility'}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {(apiKeyUrl || promoText) && (
+          <div className="-mt-2 flex flex-col gap-1.5">
+            {apiKeyUrl && (
+              <button
+                type="button"
+                onClick={() => openExternalUrl(apiKeyUrl)}
+                className="group inline-flex h-6 w-fit cursor-pointer items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-surface-container-low)] px-1.5 text-[11px] font-medium leading-none text-[var(--color-brand)] transition-colors hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
+              >
+                <span className="material-symbols-outlined text-[13px]">key</span>
+                {t('settings.providers.getApiKey')}
+                <span className="material-symbols-outlined text-[9px] opacity-60 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5">arrow_outward</span>
+              </button>
+            )}
+            {promoText && (
+              <button
+                type="button"
+                onClick={() => apiKeyUrl && openExternalUrl(apiKeyUrl)}
+                disabled={!apiKeyUrl}
+                className="group flex w-full cursor-pointer items-start gap-1.5 rounded-[var(--radius-sm)] border border-[var(--color-brand)]/25 bg-[var(--color-brand)]/8 px-2.5 py-1.5 text-left text-[11px] leading-5 text-[var(--color-text-primary)] transition-colors hover:border-[var(--color-brand)]/45 hover:bg-[var(--color-brand)]/12 focus:outline-none focus:shadow-[var(--shadow-focus-ring)] disabled:cursor-default disabled:hover:border-[var(--color-brand)]/25 disabled:hover:bg-[var(--color-brand)]/8"
+              >
+                <span className="material-symbols-outlined mt-0.5 text-[13px] text-[var(--color-brand)]">tips_and_updates</span>
+                <span>{promoText}</span>
+                {apiKeyUrl && (
+                  <span className="material-symbols-outlined ml-auto mt-1 text-[10px] text-[var(--color-brand)] opacity-45 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5">arrow_outward</span>
+                )}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Model Mapping */}
         <div>
@@ -790,6 +972,7 @@ function AgentsSettings() {
     isLoading,
     error,
     selectedAgent,
+    selectedAgentReturnTab,
     fetchAgents,
     selectAgent,
   } = useAgentStore()
@@ -814,10 +997,18 @@ function AgentsSettings() {
 
   const sourceCount = AGENT_SOURCE_ORDER.filter((source) => (groupedAgents[source] ?? []).length > 0).length
 
+  const handleAgentBack = () => {
+    const returnTab = selectedAgentReturnTab
+    selectAgent(null)
+    if (returnTab === 'plugins') {
+      useUIStore.getState().setPendingSettingsTab('plugins')
+    }
+  }
+
   if (selectedAgent) {
     return (
       <div className="w-full min-w-0">
-        <AgentDetailView agent={selectedAgent} onBack={() => selectAgent(null)} />
+        <AgentDetailView agent={selectedAgent} onBack={handleAgentBack} />
       </div>
     )
   }
@@ -926,7 +1117,7 @@ function AgentsSettings() {
                     {group.map((agent) => (
                       <button
                         key={`${agent.source}-${agent.agentType}`}
-                        onClick={() => selectAgent(agent)}
+                        onClick={() => selectAgent(agent, 'agents')}
                         className="group rounded-xl border border-transparent px-3 py-3 text-left transition-all hover:border-[var(--color-border-focus)] hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)]"
                       >
                         <div className="flex items-start gap-3">
@@ -1262,9 +1453,36 @@ function SkillSettings() {
   )
 }
 
+function PluginSettings() {
+  const selectedPlugin = usePluginStore((s) => s.selectedPlugin)
+  const t = useTranslation()
+
+  if (selectedPlugin) {
+    return (
+      <div className="w-full min-w-0">
+        <PluginDetail />
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full min-w-0">
+      <h2 className="text-base font-semibold text-[var(--color-text-primary)] mb-1">
+        {t('settings.plugins.title')}
+      </h2>
+      <p className="text-sm text-[var(--color-text-tertiary)] mb-4">
+        {t('settings.plugins.description')}
+      </p>
+      <PluginList />
+    </div>
+  )
+}
+
 // ─── About Settings ──────────────────────────────────────
 
 const GITHUB_REPO = 'https://github.com/NanmiCoder/cc-haha'
+const GITHUB_ISSUES = `${GITHUB_REPO}/issues`
+const GITHUB_RELEASES = `${GITHUB_REPO}/releases`
 const AUTHOR_GITHUB = 'https://github.com/NanmiCoder'
 const SOCIAL_LINKS = [
   { name: 'Bilibili', icon: '/icons/bilibili.svg', url: 'https://space.bilibili.com/434377496', label: '程序员阿江-Relakkes' },
@@ -1279,6 +1497,8 @@ function AboutSettings() {
   const availableVersion = useUpdateStore((s) => s.availableVersion)
   const releaseNotes = useUpdateStore((s) => s.releaseNotes)
   const progressPercent = useUpdateStore((s) => s.progressPercent)
+  const downloadedBytes = useUpdateStore((s) => s.downloadedBytes)
+  const totalBytes = useUpdateStore((s) => s.totalBytes)
   const error = useUpdateStore((s) => s.error)
   const checkedAt = useUpdateStore((s) => s.checkedAt)
   const checkForUpdates = useUpdateStore((s) => s.checkForUpdates)
@@ -1286,7 +1506,20 @@ function AboutSettings() {
   const initialize = useUpdateStore((s) => s.initialize)
 
   useEffect(() => {
-    import('@tauri-apps/api/app').then((mod) => mod.getVersion()).then(setVersion).catch(() => setVersion('0.1.0'))
+    let cancelled = false
+
+    import('@tauri-apps/api/app')
+      .then((mod) => mod.getVersion())
+      .then((value) => {
+        if (!cancelled) setVersion(value)
+      })
+      .catch(() => {
+        if (!cancelled) setVersion('0.1.0')
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -1307,11 +1540,15 @@ function AboutSettings() {
         })
       : null
 
+  const hasKnownProgress = typeof totalBytes === 'number' && totalBytes > 0
+  const downloadedText = formatBytes(downloadedBytes)
   const updateDescription =
     updateStatus === 'checking'
       ? t('update.checking')
       : updateStatus === 'downloading'
-        ? t('update.progress', { progress: String(progressPercent) })
+        ? hasKnownProgress
+          ? t('update.progress', { progress: String(progressPercent) })
+          : t('update.progressBytes', { downloaded: downloadedText })
         : updateStatus === 'restarting'
           ? t('update.restarting')
           : updateStatus === 'available' && availableVersion
@@ -1325,10 +1562,19 @@ function AboutSettings() {
   return (
     <div className="w-full min-w-0 max-w-lg mx-auto flex flex-col items-center py-6">
       {/* Logo + App Name + Version */}
-      <img src="/app-icon.jpg" alt="Claude Code Haha" className="w-20 h-20 rounded-2xl shadow-md mb-4" />
+      <img src="/app-icon.png" alt="Claude Code Haha" className="w-20 h-20 mb-4" />
       <h1 className="text-xl font-bold text-[var(--color-text-primary)]">Claude Code Haha</h1>
       {version && (
-        <span className="text-xs text-[var(--color-text-tertiary)] mt-1">{t('settings.about.version')} {version}</span>
+        <div className="mt-1 flex items-center gap-2 text-xs text-[var(--color-text-tertiary)]">
+          <span>{t('settings.about.version')} {version}</span>
+          <span className="text-[var(--color-border)]">·</span>
+          <button
+            onClick={() => openUrl(GITHUB_RELEASES)}
+            className="rounded-[var(--radius-sm)] text-[var(--color-text-accent)] transition-colors hover:text-[var(--color-brand)] focus:outline-none focus:shadow-[var(--shadow-focus-ring)]"
+          >
+            {t('settings.about.changelog')}
+          </button>
+        </div>
       )}
 
       {/* GitHub Repo */}
@@ -1342,7 +1588,6 @@ function AboutSettings() {
             <div className="text-sm font-medium text-[var(--color-text-primary)]">NanmiCoder/cc-haha</div>
             <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.about.starHint')}</div>
           </div>
-          <span className="material-symbols-outlined text-[16px] text-[var(--color-text-tertiary)]">open_in_new</span>
         </button>
       </div>
 
@@ -1400,22 +1645,33 @@ function AboutSettings() {
           {(updateStatus === 'downloading' || updateStatus === 'restarting') && (
             <div className="mt-3">
               <div className="h-1.5 bg-[var(--color-surface-container-low)] rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[var(--color-text-accent)] transition-all duration-300"
-                  style={{ width: `${Math.min(progressPercent, 100)}%` }}
-                />
+                {hasKnownProgress || updateStatus === 'restarting' ? (
+                  <div
+                    className="h-full bg-[var(--color-text-accent)] transition-all duration-300"
+                    style={{ width: `${Math.min(progressPercent, 100)}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-1/3 rounded-full bg-[var(--color-text-accent)]/75 animate-pulse" />
+                )}
               </div>
+              {!hasKnownProgress && updateStatus === 'downloading' && downloadedBytes > 0 && (
+                <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                  {downloadedText}
+                </p>
+              )}
             </div>
           )}
 
           {releaseNotes && availableVersion && (
-            <div className="mt-3 rounded-lg bg-[var(--color-surface-container-low)] px-3 py-2">
+            <div className="mt-3 rounded-lg bg-[var(--color-surface-container-low)] px-3 py-3">
               <div className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-tertiary)]">
                 {t('update.releaseNotes')}
               </div>
-              <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)] whitespace-pre-wrap">
-                {releaseNotes}
-              </p>
+              <MarkdownRenderer
+                content={releaseNotes}
+                variant="document"
+                className="mt-2 text-[13px] leading-6 text-[var(--color-text-secondary)] [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_p]:text-[13px] [&_p]:leading-6"
+              />
             </div>
           )}
 
@@ -1465,15 +1721,20 @@ function AboutSettings() {
               <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">{link.name}</span>
             </button>
           ))}
-          <button
-            onClick={() => openUrl('mailto:relakkes@gmail.com')}
-            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[16px] opacity-60">mail</span>
-            <span className="text-sm text-[var(--color-text-primary)]">relakkes@gmail.com</span>
-            <span className="text-xs text-[var(--color-text-tertiary)] ml-auto">Email</span>
-          </button>
         </div>
+      </div>
+
+      <div className="mt-6 w-full">
+        <button
+          onClick={() => openUrl(GITHUB_ISSUES)}
+          className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-[var(--color-border)] hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer"
+        >
+          <span className="material-symbols-outlined text-[20px] text-[var(--color-text-tertiary)]">feedback</span>
+          <div className="flex-1 text-left">
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">{t('settings.about.feedback')}</div>
+            <div className="text-xs text-[var(--color-text-tertiary)]">{t('settings.about.feedbackDesc')}</div>
+          </div>
+        </button>
       </div>
     </div>
   )

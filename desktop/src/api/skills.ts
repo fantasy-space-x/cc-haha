@@ -4,7 +4,7 @@ import type { SkillMeta, SkillDetail } from '../types/skill'
 export const skillsApi = {
   list: (cwd?: string) => {
     const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
-    return api.get<{ skills: SkillMeta[] }>(`/api/skills${query}`)
+    return api.get<{ skills: SkillMeta[] }>(`/api/skills${query}`, { timeout: 120_000 })
   },
 
   detail: (source: string, name: string, cwd?: string) => {
@@ -14,6 +14,9 @@ export const skillsApi = {
     })
     if (cwd) query.set('cwd', cwd)
 
-    return api.get<{ detail: SkillDetail }>(`/api/skills/detail?${query.toString()}`)
+    return api.get<{ detail: SkillDetail }>(
+      `/api/skills/detail?${query.toString()}`,
+      { timeout: 120_000 },
+    )
   },
 }

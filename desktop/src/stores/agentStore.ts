@@ -1,15 +1,21 @@
 import { create } from 'zustand'
 import { agentsApi, type AgentDefinition } from '../api/agents'
 
+export type AgentDetailReturnTab = 'agents' | 'plugins'
+
 type AgentStore = {
   activeAgents: AgentDefinition[]
   allAgents: AgentDefinition[]
   isLoading: boolean
   error: string | null
   selectedAgent: AgentDefinition | null
+  selectedAgentReturnTab: AgentDetailReturnTab
 
   fetchAgents: (cwd?: string) => Promise<void>
-  selectAgent: (agent: AgentDefinition | null) => void
+  selectAgent: (
+    agent: AgentDefinition | null,
+    returnTab?: AgentDetailReturnTab,
+  ) => void
 }
 
 export const useAgentStore = create<AgentStore>((set) => ({
@@ -18,6 +24,7 @@ export const useAgentStore = create<AgentStore>((set) => ({
   isLoading: false,
   error: null,
   selectedAgent: null,
+  selectedAgentReturnTab: 'agents',
 
   fetchAgents: async (cwd) => {
     set({ isLoading: true, error: null })
@@ -30,5 +37,9 @@ export const useAgentStore = create<AgentStore>((set) => ({
     }
   },
 
-  selectAgent: (agent) => set({ selectedAgent: agent }),
+  selectAgent: (agent, returnTab = 'agents') =>
+    set({
+      selectedAgent: agent,
+      selectedAgentReturnTab: agent ? returnTab : 'agents',
+    }),
 }))

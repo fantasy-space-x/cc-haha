@@ -32,6 +32,7 @@ function initMermaid() {
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'strict',
+    suppressErrorRendering: true,
     fontFamily: 'var(--font-sans)',
   })
   mermaidInitialized = true
