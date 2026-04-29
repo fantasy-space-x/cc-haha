@@ -284,6 +284,15 @@ async function main(): Promise<void> {
     process.env.CLAUDE_CODE_SIMPLE = '1';
   }
 
+  // Warn if X_STORE_API or X_PLATFORM are not set
+  if (!process.env.X_STORE_API || !process.env.X_PLATFORM) {
+    const missing: string[] = [];
+    if (!process.env.X_STORE_API) missing.push('X_STORE_API');
+    if (!process.env.X_PLATFORM) missing.push('X_PLATFORM');
+    // biome-ignore lint/suspicious/noConsole: intentional startup warning
+    console.warn(`Warning: ${missing.join(', ')} not set`);
+  }
+
   // No special flags detected, load and run the full CLI
   const {
     startCapturingEarlyInput
