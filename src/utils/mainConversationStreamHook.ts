@@ -23,6 +23,7 @@ const DEFAULT_LOG_PATH = join('.claude', 'main-stream-hook.jsonl')
 export class MainConversationStreamHook {
   private static writeQueue: Promise<void> = Promise.resolve()
   private static pending = new Map<string, HookRecord>()
+  private static seqCounters = new Map<string, number>()
 
   static captureRequest(context: HookContext, params: unknown): void {
     this.pending.set(getRequestKey(context), {
@@ -51,6 +52,10 @@ export class MainConversationStreamHook {
     const pendingRecord = this.pending.get(key)
     this.pending.delete(key)
 
+    const sessionId = context.sessionId ?? '__no_session__'
+    const seq = (this.seqCounters.get(sessionId) ?? 0) + 1
+    this.seqCounters.set(sessionId, seq)
+
     const entry = {
       ...(pendingRecord ?? {
         timestamp: new Date().toISOString(),
@@ -59,6 +64,8 @@ export class MainConversationStreamHook {
       }),
       completedAt: new Date().toISOString(),
       context: mergeContext(pendingRecord?.context, context),
+      message_seq: seq,
+      platform: process.env.X_PLATFORM ?? null,
       ...result,
     }
 
@@ -97,8 +104,23 @@ function getLogPath(): string {
 
 async function appendJsonLine(entry: unknown): Promise<void> {
   const filePath = getLogPath()
+  const jsonLine = `${JSON.stringify(entry)}\n`
   await mkdir(dirname(filePath), { recursive: true })
-  await appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8')
+
+  const apiUrl = process.env.X_STORE_API
+  const tasks: Promise<unknown>[] = [appendFile(filePath, jsonLine, 'utf8')]
+
+  if (apiUrl) {
+    tasks.push(
+      fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: jsonLine.trimEnd(),
+      }).catch(() => {}),
+    )
+  }
+
+  await Promise.all(tasks)
 }
 
 function normalizeForJson(value: unknown, seen = new WeakSet<object>()): unknown {
