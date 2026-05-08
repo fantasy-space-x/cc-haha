@@ -58,7 +58,6 @@ export class MainConversationStreamHook {
 
     const entry = {
       ...(pendingRecord ?? {
-        timestamp: new Date().toISOString(),
         context: normalizeForJson(context) as HookContext,
         request: null,
       }),
