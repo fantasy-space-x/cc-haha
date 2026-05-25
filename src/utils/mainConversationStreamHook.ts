@@ -18,7 +18,7 @@ type HookRecord = {
   request: unknown
 }
 
-const DEFAULT_LOG_PATH = join('.claude', 'main-stream-hook.jsonl')
+const DEFAULT_LOG_DIR = '.claude'
 
 export class MainConversationStreamHook {
   private static writeQueue: Promise<void> = Promise.resolve()
@@ -68,8 +68,9 @@ export class MainConversationStreamHook {
       ...result,
     }
 
+    const sessionIdForPath = context.sessionId ?? pendingRecord?.context.sessionId ?? sessionId
     this.writeQueue = this.writeQueue
-      .then(() => appendJsonLine(entry))
+      .then(() => appendJsonLine(entry, sessionIdForPath))
       .catch(() => {})
   }
 }
@@ -95,14 +96,20 @@ function mergeContext(
   }
 }
 
-function getLogPath(): string {
+function sanitizeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_') || '__no_session__'
+}
+
+function getLogPath(sessionId: string): string {
+  const fileName = `${sanitizeSessionId(sessionId)}.jsonl`
   const configured = process.env.CLAUDE_MAIN_STREAM_HOOK_LOG_PATH
-  const filePath = configured && configured.trim() ? configured : DEFAULT_LOG_PATH
+  const baseDir = configured && configured.trim() ? configured : DEFAULT_LOG_DIR
+  const filePath = join(baseDir, fileName)
   return isAbsolute(filePath) ? filePath : join(process.cwd(), filePath)
 }
 
-async function appendJsonLine(entry: unknown): Promise<void> {
-  const filePath = getLogPath()
+async function appendJsonLine(entry: unknown, sessionId: string): Promise<void> {
+  const filePath = getLogPath(sessionId)
   const jsonLine = `${JSON.stringify(entry)}\n`
   await mkdir(dirname(filePath), { recursive: true })
 
