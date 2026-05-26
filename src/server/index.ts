@@ -32,10 +32,15 @@ function resolveServerOptions() {
   const port = Number.parseInt(portArg || process.env.SERVER_PORT || '3456', 10)
   const host = readArgValue('--host') || process.env.SERVER_HOST || '127.0.0.1'
   const cliPath = readArgValue('--cli-path')
+  const historyDir = readArgValue('--history-dir')
   const authRequired = hasArgFlag('--auth-required')
 
   if (cliPath) {
     process.env.CLAUDE_CLI_PATH = cliPath
+  }
+
+  if (historyDir) {
+    process.env.CLAUDE_CONFIG_DIR = historyDir
   }
 
   return { port, host, authRequired }
