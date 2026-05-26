@@ -33,6 +33,9 @@ function resolveServerOptions() {
   const host = readArgValue('--host') || process.env.SERVER_HOST || '127.0.0.1'
   const cliPath = readArgValue('--cli-path')
   const historyDir = readArgValue('--history-dir')
+  const apiKey = readArgValue('--api-key')
+  const baseUrl = readArgValue('--base-url')
+  const model = readArgValue('--model')
   const authRequired = hasArgFlag('--auth-required')
 
   if (cliPath) {
@@ -41,6 +44,18 @@ function resolveServerOptions() {
 
   if (historyDir) {
     process.env.CLAUDE_CONFIG_DIR = historyDir
+  }
+
+  if (apiKey) {
+    process.env.ANTHROPIC_API_KEY = apiKey
+  }
+
+  if (baseUrl) {
+    process.env.ANTHROPIC_BASE_URL = baseUrl
+  }
+
+  if (model) {
+    process.env.ANTHROPIC_MODEL = model
   }
 
   return { port, host, authRequired }
