@@ -247,6 +247,8 @@ export function startServer(port = PORT, host = HOST) {
   })
 
   console.log(`[Server] Claude Code API server running at http://${host}:${port}`)
+  console.log(`[Server] Base URL: ${process.env.ANTHROPIC_BASE_URL || '(default)'}`)
+  console.log(`[Server] Model: ${process.env.ANTHROPIC_MODEL || '(default)'}`)
   return server
 }
 
