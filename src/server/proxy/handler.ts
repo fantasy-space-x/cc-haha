@@ -20,6 +20,15 @@ import type { AnthropicRequest } from './transform/types.js'
 
 const providerService = new ProviderService()
 
+type ProxyConfig = { baseUrl: string; apiKey: string; apiFormat: 'anthropic' | 'openai_chat' | 'openai_responses' }
+
+let serverProxyConfig: ProxyConfig | null = null
+
+export function setServerProxyConfig(config: ProxyConfig): void {
+  serverProxyConfig = config
+  console.log(`[Proxy] Server-level proxy config set: format=${config.apiFormat} baseUrl=${config.baseUrl}`)
+}
+
 export async function handleProxyRequest(req: Request, url: URL): Promise<Response> {
   const providerMatch = url.pathname.match(/^\/proxy\/providers\/([^/]+)\/v1\/messages$/)
   const providerId = providerMatch ? decodeURIComponent(providerMatch[1]!) : undefined
@@ -36,8 +45,9 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
     )
   }
 
-  // Read active/default provider config or an explicitly-scoped provider config.
+  // Read provider config: explicit provider > active provider > server CLI args
   const config = await providerService.getProviderForProxy(providerId)
+    ?? serverProxyConfig
   if (!config) {
     return Response.json(
       {
@@ -82,6 +92,8 @@ export async function handleProxyRequest(req: Request, url: URL): Promise<Respon
   const isStream = body.stream === true
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
 
+  console.log(`[Proxy] ${config.apiFormat} model=${body.model} stream=${isStream} -> ${baseUrl}`)
+
   try {
     if (config.apiFormat === 'openai_chat') {
       return await handleOpenaiChat(body, baseUrl, config.apiKey, isStream)
@@ -112,6 +124,8 @@ async function handleOpenaiChat(
   const transformed = anthropicToOpenaiChat(body)
   const url = `${baseUrl}/v1/chat/completions`
 
+  const startTime = Date.now()
+
   const upstream = await fetch(url, {
     method: 'POST',
     headers: {
@@ -124,6 +138,7 @@ async function handleOpenaiChat(
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')
+    console.error(`[Proxy] openai_chat upstream ${upstream.status} (${Date.now() - startTime}ms): ${errText.slice(0, 200)}`)
     return Response.json(
       {
         type: 'error',
@@ -137,6 +152,7 @@ async function handleOpenaiChat(
   }
 
   if (isStream) {
+    console.log(`[Proxy] openai_chat streaming started (${Date.now() - startTime}ms)`)
     if (!upstream.body) {
       return Response.json(
         { type: 'error', error: { type: 'api_error', message: 'Upstream returned no body for stream' } },
@@ -156,6 +172,7 @@ async function handleOpenaiChat(
 
   // Non-streaming
   const responseBody = await upstream.json()
+  console.log(`[Proxy] openai_chat completed (${Date.now() - startTime}ms)`)
   const anthropicResponse = openaiChatToAnthropic(responseBody, body.model)
   return Response.json(anthropicResponse)
 }
@@ -168,6 +185,7 @@ async function handleOpenaiResponses(
 ): Promise<Response> {
   const transformed = anthropicToOpenaiResponses(body)
   const url = `${baseUrl}/v1/responses`
+  const startTime = Date.now()
 
   const upstream = await fetch(url, {
     method: 'POST',
@@ -181,6 +199,7 @@ async function handleOpenaiResponses(
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => '')
+    console.error(`[Proxy] openai_responses upstream ${upstream.status} (${Date.now() - startTime}ms): ${errText.slice(0, 200)}`)
     return Response.json(
       {
         type: 'error',
@@ -194,6 +213,7 @@ async function handleOpenaiResponses(
   }
 
   if (isStream) {
+    console.log(`[Proxy] openai_responses streaming started (${Date.now() - startTime}ms)`)
     if (!upstream.body) {
       return Response.json(
         { type: 'error', error: { type: 'api_error', message: 'Upstream returned no body for stream' } },
@@ -213,6 +233,7 @@ async function handleOpenaiResponses(
 
   // Non-streaming
   const responseBody = await upstream.json()
+  console.log(`[Proxy] openai_responses completed (${Date.now() - startTime}ms)`)
   const anthropicResponse = openaiResponsesToAnthropic(responseBody, body.model)
   return Response.json(anthropicResponse)
 }

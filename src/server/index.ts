@@ -11,7 +11,7 @@ import { corsHeaders } from './middleware/cors.js'
 import { requireAuth } from './middleware/auth.js'
 import { teamWatcher } from './services/teamWatcher.js'
 import { cronScheduler } from './services/cronScheduler.js'
-import { handleProxyRequest } from './proxy/handler.js'
+import { handleProxyRequest, setServerProxyConfig } from './proxy/handler.js'
 import { ProviderService } from './services/providerService.js'
 import { handleHahaOAuthCallback } from './api/haha-oauth.js'
 import { ensureDesktopCliLauncherInstalled } from './services/desktopCliLauncherService.js'
@@ -27,6 +27,10 @@ function hasArgFlag(flag: string): boolean {
   return process.argv.slice(2).includes(flag)
 }
 
+type ApiFormat = 'anthropic' | 'openai_chat' | 'openai_responses'
+
+const VALID_API_FORMATS: ApiFormat[] = ['anthropic', 'openai_chat', 'openai_responses']
+
 function resolveServerOptions() {
   const portArg = readArgValue('--port')
   const port = Number.parseInt(portArg || process.env.SERVER_PORT || '3456', 10)
@@ -36,7 +40,23 @@ function resolveServerOptions() {
   const apiKey = readArgValue('--api-key')
   const baseUrl = readArgValue('--base-url')
   const model = readArgValue('--model')
+  const apiFormat = (readArgValue('--api-format') || 'anthropic') as ApiFormat
   const authRequired = hasArgFlag('--auth-required')
+
+  // Server mode requires all three provider params
+  const missing: string[] = []
+  if (!apiKey) missing.push('--api-key')
+  if (!baseUrl) missing.push('--base-url')
+  if (!model) missing.push('--model')
+  if (missing.length > 0) {
+    console.error(`[Server] Missing required arguments: ${missing.join(', ')}`)
+    process.exit(1)
+  }
+
+  if (!VALID_API_FORMATS.includes(apiFormat)) {
+    console.error(`[Server] Invalid --api-format: "${apiFormat}". Valid values: ${VALID_API_FORMATS.join(', ')}`)
+    process.exit(1)
+  }
 
   if (cliPath) {
     process.env.CLAUDE_CLI_PATH = cliPath
@@ -46,19 +66,34 @@ function resolveServerOptions() {
     process.env.CLAUDE_CONFIG_DIR = historyDir
   }
 
-  if (apiKey) {
-    process.env.ANTHROPIC_API_KEY = apiKey
-  }
+  // Override all ANTHROPIC_* provider env vars with CLI args.
+  // These take absolute priority over .env files and settings.json.
+  //
+  // For non-anthropic API formats (openai_chat, openai_responses), the actual
+  // ANTHROPIC_BASE_URL is set later in startServer() to point to the local
+  // proxy, which translates Anthropic format to the upstream format.
+  process.env.ANTHROPIC_API_KEY = apiFormat === 'anthropic' ? apiKey : 'proxy-managed'
+  process.env.ANTHROPIC_BASE_URL = baseUrl
+  process.env.ANTHROPIC_MODEL = model
+  // Force all model family defaults to the specified model
+  process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = model
+  process.env.ANTHROPIC_DEFAULT_SONNET_MODEL = model
+  process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = model
+  process.env.ANTHROPIC_SMALL_FAST_MODEL = model
 
-  if (baseUrl) {
-    process.env.ANTHROPIC_BASE_URL = baseUrl
-  }
+  const maskedKey = apiKey!.length > 8
+    ? `${apiKey!.slice(0, 4)}...${apiKey!.slice(-4)}`
+    : '****'
+  console.log(`[Server] Resolved options:`)
+  console.log(`[Server]   port=${port} host=${host} auth=${authRequired ? 'required' : 'off'}`)
+  console.log(`[Server]   base-url=${baseUrl}`)
+  console.log(`[Server]   api-key=${maskedKey}`)
+  console.log(`[Server]   model=${model} (all families)`)
+  console.log(`[Server]   api-format=${apiFormat}`)
+  if (cliPath) console.log(`[Server]   cli-path=${cliPath}`)
+  if (historyDir) console.log(`[Server]   history-dir=${historyDir}`)
 
-  if (model) {
-    process.env.ANTHROPIC_MODEL = model
-  }
-
-  return { port, host, authRequired }
+  return { port, host, authRequired, apiFormat, apiKey: apiKey!, baseUrl: baseUrl! }
 }
 
 const SERVER_OPTIONS = resolveServerOptions()
@@ -71,6 +106,21 @@ export function startServer(port = PORT, host = HOST) {
     host === '0.0.0.0' || host === '127.0.0.1' || host === 'localhost'
       ? '127.0.0.1'
       : host
+
+  // For non-anthropic API formats, route CLI requests through the local proxy
+  // which translates Anthropic Messages API → OpenAI Chat/Responses API.
+  const needsProxy = SERVER_OPTIONS.apiFormat !== 'anthropic'
+  if (needsProxy) {
+    setServerProxyConfig({
+      baseUrl: SERVER_OPTIONS.baseUrl,
+      apiKey: SERVER_OPTIONS.apiKey,
+      apiFormat: SERVER_OPTIONS.apiFormat,
+    })
+    const proxyUrl = `http://127.0.0.1:${port}/proxy/v1/messages`
+    process.env.ANTHROPIC_BASE_URL = proxyUrl
+    process.env.ANTHROPIC_API_KEY = 'proxy-managed'
+    console.log(`[Server] Non-anthropic format (${SERVER_OPTIONS.apiFormat}): routing CLI through proxy -> ${proxyUrl}`)
+  }
 
   /**
    * Auth is required when explicitly opted in or when bound to a non-localhost address.
@@ -89,6 +139,7 @@ export function startServer(port = PORT, host = HOST) {
 
     async fetch(req, server) {
       const url = new URL(req.url)
+      const startTime = Date.now()
 
       const origin = req.headers.get('Origin')
 
@@ -103,6 +154,7 @@ export function startServer(port = PORT, host = HOST) {
         if (authRequired) {
           const authError = requireAuth(req)
           if (authError) {
+            console.warn(`[Server] WS auth rejected: ${url.pathname}`)
             const headers = new Headers(authError.headers)
             for (const [key, value] of Object.entries(corsHeaders(origin))) {
               headers.set(key, value)
@@ -114,8 +166,10 @@ export function startServer(port = PORT, host = HOST) {
         // Validate session ID format
         const sessionId = url.pathname.split('/').pop() || ''
         if (!sessionId || !/^[0-9a-zA-Z_-]{1,64}$/.test(sessionId)) {
+          console.warn(`[Server] Invalid WS session ID: ${sessionId}`)
           return new Response('Invalid session ID', { status: 400 })
         }
+        console.log(`[Server] WS upgrade /ws/ session=${sessionId}`)
         const upgraded = server.upgrade(req, {
           data: {
             sessionId,
@@ -127,6 +181,7 @@ export function startServer(port = PORT, host = HOST) {
           },
         })
         if (upgraded) return undefined
+        console.error(`[Server] WS upgrade failed for session=${sessionId}`)
         return new Response('WebSocket upgrade failed', { status: 400 })
       }
 
@@ -134,8 +189,10 @@ export function startServer(port = PORT, host = HOST) {
       if (url.pathname.startsWith('/sdk/')) {
         const sessionId = url.pathname.split('/').pop() || ''
         if (!sessionId || !/^[0-9a-zA-Z_-]{1,64}$/.test(sessionId)) {
+          console.warn(`[Server] Invalid SDK session ID: ${sessionId}`)
           return new Response('Invalid session ID', { status: 400 })
         }
+        console.log(`[Server] WS upgrade /sdk/ session=${sessionId}`)
         const upgraded = server.upgrade(req, {
           data: {
             sessionId,
@@ -147,10 +204,12 @@ export function startServer(port = PORT, host = HOST) {
           },
         })
         if (upgraded) return undefined
+        console.error(`[Server] SDK WS upgrade failed for session=${sessionId}`)
         return new Response('WebSocket upgrade failed', { status: 400 })
       }
 
       if (url.pathname === '/callback') {
+        console.log(`[Server] OAuth callback`)
         return handleHahaOAuthCallback(url)
       }
 
@@ -160,6 +219,7 @@ export function startServer(port = PORT, host = HOST) {
         if (authRequired) {
           const authError = requireAuth(req)
           if (authError) {
+            console.warn(`[Server] API auth rejected: ${req.method} ${url.pathname}`)
             const headers = new Headers(authError.headers)
             for (const [key, value] of Object.entries(corsHeaders(origin))) {
               headers.set(key, value)
@@ -170,6 +230,8 @@ export function startServer(port = PORT, host = HOST) {
 
         try {
           const response = await handleApiRequest(req, url)
+          const elapsed = Date.now() - startTime
+          console.log(`[Server] ${req.method} ${url.pathname} -> ${response.status} (${elapsed}ms)`)
           // Add CORS headers to all responses
           const headers = new Headers(response.headers)
           for (const [key, value] of Object.entries(corsHeaders(origin))) {
@@ -180,7 +242,8 @@ export function startServer(port = PORT, host = HOST) {
             headers,
           })
         } catch (error) {
-          console.error('[Server] API error:', error)
+          const elapsed = Date.now() - startTime
+          console.error(`[Server] ${req.method} ${url.pathname} -> ERROR (${elapsed}ms):`, error)
           return Response.json(
             { error: 'Internal server error' },
             { status: 500, headers: corsHeaders() }
@@ -193,6 +256,7 @@ export function startServer(port = PORT, host = HOST) {
         if (authRequired) {
           const authError = requireAuth(req)
           if (authError) {
+            console.warn(`[Server] Proxy auth rejected: ${url.pathname}`)
             const headers = new Headers(authError.headers)
             for (const [key, value] of Object.entries(corsHeaders(origin))) {
               headers.set(key, value)
@@ -200,8 +264,11 @@ export function startServer(port = PORT, host = HOST) {
             return new Response(authError.body, { status: authError.status, headers })
           }
         }
+        console.log(`[Server] Proxy ${req.method} ${url.pathname}`)
         try {
           const response = await handleProxyRequest(req, url)
+          const elapsed = Date.now() - startTime
+          console.log(`[Server] Proxy ${url.pathname} -> ${response.status} (${elapsed}ms)`)
           const headers = new Headers(response.headers)
           for (const [key, value] of Object.entries(corsHeaders(origin))) {
             headers.set(key, value)
@@ -211,7 +278,8 @@ export function startServer(port = PORT, host = HOST) {
             headers,
           })
         } catch (error) {
-          console.error('[Server] Proxy error:', error)
+          const elapsed = Date.now() - startTime
+          console.error(`[Server] Proxy ${url.pathname} -> ERROR (${elapsed}ms):`, error)
           return Response.json(
             { type: 'error', error: { type: 'api_error', message: 'Internal proxy error' } },
             { status: 500, headers: corsHeaders() },
@@ -227,6 +295,7 @@ export function startServer(port = PORT, host = HOST) {
         )
       }
 
+      console.warn(`[Server] 404 Not Found: ${req.method} ${url.pathname}`)
       return new Response('Not Found', { status: 404 })
     },
 
@@ -246,9 +315,13 @@ export function startServer(port = PORT, host = HOST) {
     )
   })
 
+  console.log(`[Server] ──────────────────────────────────────────────`)
   console.log(`[Server] Claude Code API server running at http://${host}:${port}`)
-  console.log(`[Server] Base URL: ${process.env.ANTHROPIC_BASE_URL || '(default)'}`)
-  console.log(`[Server] Model: ${process.env.ANTHROPIC_MODEL || '(default)'}`)
+  console.log(`[Server] Base URL: ${process.env.ANTHROPIC_BASE_URL}`)
+  console.log(`[Server] Model:    ${process.env.ANTHROPIC_MODEL}`)
+  console.log(`[Server] Auth:     ${authRequired ? 'required' : 'off'}`)
+  console.log(`[Server] PID:      ${process.pid}`)
+  console.log(`[Server] ──────────────────────────────────────────────`)
   return server
 }
 
@@ -258,10 +331,12 @@ import { conversationService } from './services/conversationService.js'
 function cleanupAllSessions() {
   const active = conversationService.getActiveSessions()
   if (active.length > 0) {
-    console.log(`[Server] Shutting down — killing ${active.length} CLI subprocess(es)`)
+    console.log(`[Server] Shutting down — killing ${active.length} CLI subprocess(es): ${active.join(', ')}`)
     for (const sessionId of active) {
       conversationService.stopSession(sessionId)
     }
+  } else {
+    console.log('[Server] Shutting down — no active sessions')
   }
 }
 
