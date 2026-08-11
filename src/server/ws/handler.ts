@@ -55,8 +55,9 @@ const sessionTitleState = new Map<string, {
 }>()
 
 const runtimeOverrides = new Map<string, {
-  providerId: string | null
-  modelId: string
+  providerId?: string | null
+  modelId?: string
+  effort?: 'low' | 'medium' | 'high' | 'max'
 }>()
 
 const runtimeTransitionPromises = new Map<string, Promise<void>>()
@@ -247,7 +248,7 @@ async function handleUserMessage(
       console.error(`[WS] Runtime transition failed before handling user message for ${sessionId}: ${errMsg}`)
       sendMessage(ws, {
         type: 'error',
-        message: `Failed to switch provider/model: ${errMsg}`,
+        message: `Failed to apply runtime configuration: ${errMsg}`,
         code: 'CLI_RESTART_FAILED',
       })
       sendMessage(ws, { type: 'status', state: 'idle' })
@@ -434,8 +435,10 @@ async function handleSetRuntimeConfig(
   message: Extract<ClientMessage, { type: 'set_runtime_config' }>
 ) {
   const { sessionId } = ws.data
+  const prevOverride = runtimeOverrides.get(sessionId)
+  const hasModelUpdate = message.modelId !== undefined || message.providerId !== undefined
   const modelId = typeof message.modelId === 'string' ? message.modelId.trim() : ''
-  if (!modelId) {
+  if (hasModelUpdate && !modelId) {
     sendMessage(ws, {
       type: 'error',
       message: 'Runtime model selection is invalid.',
@@ -444,17 +447,53 @@ async function handleSetRuntimeConfig(
     return
   }
 
-  const nextOverride = {
-    providerId: message.providerId ?? null,
-    modelId,
+  const hasEffortUpdate = message.effort !== undefined
+  const effort = typeof message.effort === 'string' ? message.effort.trim() : ''
+  if (
+    hasEffortUpdate &&
+    message.effort !== null &&
+    !['low', 'medium', 'high', 'max'].includes(effort)
+  ) {
+    sendMessage(ws, {
+      type: 'error',
+      message: 'Runtime effort selection is invalid.',
+      code: 'RUNTIME_CONFIG_INVALID',
+    })
+    return
   }
-  const prevOverride = runtimeOverrides.get(sessionId)
-  runtimeOverrides.set(sessionId, nextOverride)
+
+  if (!hasModelUpdate && !hasEffortUpdate) {
+    sendMessage(ws, {
+      type: 'error',
+      message: 'Runtime configuration is empty.',
+      code: 'RUNTIME_CONFIG_INVALID',
+    })
+    return
+  }
+
+  const nextOverride = { ...prevOverride }
+  if (hasModelUpdate) {
+    nextOverride.providerId = message.providerId ?? null
+    nextOverride.modelId = modelId
+  }
+  if (hasEffortUpdate) {
+    if (message.effort === null) {
+      delete nextOverride.effort
+    } else {
+      nextOverride.effort = effort as 'low' | 'medium' | 'high' | 'max'
+    }
+  }
+
+  if (nextOverride.modelId === undefined && nextOverride.effort === undefined) {
+    runtimeOverrides.delete(sessionId)
+  } else {
+    runtimeOverrides.set(sessionId, nextOverride)
+  }
 
   if (
-    prevOverride &&
-    prevOverride.providerId === nextOverride.providerId &&
-    prevOverride.modelId === nextOverride.modelId
+    prevOverride?.providerId === nextOverride.providerId &&
+    prevOverride?.modelId === nextOverride.modelId &&
+    prevOverride?.effort === nextOverride.effort
   ) {
     return
   }
@@ -511,7 +550,7 @@ async function restartSessionWithRuntimeConfig(
     sendMessage(ws, {
       type: 'status',
       state: 'thinking',
-      verb: 'Switching provider and model...',
+      verb: 'Applying runtime configuration...',
     })
 
     const workDir = conversationService.getSessionWorkDir(sessionId)
@@ -530,7 +569,7 @@ async function restartSessionWithRuntimeConfig(
     console.error(`[WS] Failed to restart CLI for ${sessionId} after runtime override: ${errMsg}`)
     sendMessage(ws, {
       type: 'error',
-      message: `Failed to switch provider/model: ${errMsg}`,
+      message: `Failed to apply runtime configuration: ${errMsg}`,
       code: 'CLI_RESTART_FAILED',
     })
     sendMessage(ws, { type: 'status', state: 'idle' })
@@ -1215,9 +1254,9 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
   providerId?: string | null
 }> {
   const runtimeOverride = sessionId ? runtimeOverrides.get(sessionId) : undefined
-  if (runtimeOverride) {
+  if (runtimeOverride?.modelId) {
     const userSettings = await settingsService.getUserSettings()
-    const effort =
+    const userEffort =
       typeof userSettings.effort === 'string' && userSettings.effort.trim()
         ? userSettings.effort
         : undefined
@@ -1225,7 +1264,7 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
     return {
       permissionMode: await settingsService.getPermissionMode().catch(() => undefined),
       model: runtimeOverride.modelId,
-      effort,
+      effort: runtimeOverride.effort ?? userEffort,
       providerId: runtimeOverride.providerId,
     }
   }
@@ -1270,7 +1309,7 @@ async function getRuntimeSettings(sessionId?: string): Promise<{
   return {
     permissionMode: await settingsService.getPermissionMode().catch(() => undefined),
     model,
-    effort,
+    effort: runtimeOverride?.effort ?? effort,
   }
 }
 

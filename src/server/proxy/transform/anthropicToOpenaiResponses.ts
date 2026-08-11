@@ -66,8 +66,12 @@ export function anthropicToOpenaiResponses(body: AnthropicRequest): OpenAIRespon
     result.tool_choice = convertToolChoice(body.tool_choice)
   }
 
-  // thinking → reasoning
-  if (body.thinking) {
+  // Claude output_config.effort takes precedence over the legacy thinking budget.
+  if (body.output_config?.effort) {
+    result.reasoning = {
+      effort: body.output_config.effort === 'max' ? 'xhigh' : body.output_config.effort,
+    }
+  } else if (body.thinking) {
     const budget = body.thinking.budget_tokens
     if (budget !== undefined) {
       if (budget <= 1024) result.reasoning = { effort: 'low' }

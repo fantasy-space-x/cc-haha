@@ -447,12 +447,21 @@ describe('WebSocket Chat Integration', () => {
     throw new Error(`Timed out waiting for ${label}`)
   }
   const originalCliPath = process.env.CLAUDE_CLI_PATH
+  const originalArgv = [...process.argv]
 
   beforeAll(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-conv-'))
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.CLAUDE_CLI_PATH = fileURLToPath(
       new URL('./fixtures/mock-sdk-cli.ts', import.meta.url)
+    )
+    process.argv.push(
+      '--api-key',
+      'test-key',
+      '--base-url',
+      'http://127.0.0.1:1',
+      '--model',
+      'test-model',
     )
     await fs.mkdir(path.join(tmpDir, 'projects'), { recursive: true })
 
@@ -474,6 +483,7 @@ describe('WebSocket Chat Integration', () => {
       delete process.env.CLAUDE_CLI_PATH
     }
     delete process.env.CLAUDE_CONFIG_DIR
+    process.argv.splice(0, process.argv.length, ...originalArgv)
   })
 
   it('should connect and receive connected event', async () => {
@@ -982,7 +992,7 @@ describe('WebSocket Chat Integration', () => {
     })
   })
 
-  it('should keep using the selected runtime config across the whole session until changed', async () => {
+  it('should keep using the selected runtime effort across the whole session until changed', async () => {
     const providerService = new ProviderService()
     const providerA = await providerService.addProvider({
       presetId: 'custom',
@@ -997,20 +1007,6 @@ describe('WebSocket Chat Integration', () => {
         opus: 'model-a-opus',
       },
     })
-    const providerB = await providerService.addProvider({
-      presetId: 'custom',
-      name: 'Provider B',
-      apiKey: 'key-b',
-      baseUrl: 'http://127.0.0.1:1/anthropic',
-      apiFormat: 'anthropic',
-      models: {
-        main: 'model-b-main',
-        haiku: 'model-b-haiku',
-        sonnet: 'model-b-sonnet',
-        opus: 'model-b-opus',
-      },
-    })
-
     const createRes = await fetch(`${baseUrl}/api/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1054,6 +1050,7 @@ describe('WebSocket Chat Integration', () => {
               type: 'set_runtime_config',
               providerId: providerA.id,
               modelId: 'model-a-sonnet',
+              effort: 'high',
             }))
             ws.send(JSON.stringify({ type: 'user_message', content: 'first turn' }))
             phase = 'turn1'
@@ -1072,8 +1069,7 @@ describe('WebSocket Chat Integration', () => {
             phase = 'switching'
             ws.send(JSON.stringify({
               type: 'set_runtime_config',
-              providerId: providerB.id,
-              modelId: 'model-b-opus',
+              effort: 'max',
             }))
             return
           }
@@ -1113,13 +1109,15 @@ describe('WebSocket Chat Integration', () => {
         options: {
           providerId: providerA.id,
           model: 'model-a-sonnet',
+          effort: 'high',
         },
       })
       expect(startCalls[1]).toMatchObject({
         sessionId,
         options: {
-          providerId: providerB.id,
-          model: 'model-b-opus',
+          providerId: providerA.id,
+          model: 'model-a-sonnet',
+          effort: 'max',
         },
       })
     } finally {

@@ -652,6 +652,9 @@ export class ConversationService {
           }
         : {}),
       CC_HAHA_SKIP_DOTENV: '1',
+      ...(options?.effort
+        ? { CLAUDE_CODE_ALWAYS_ENABLE_EFFORT: '1' }
+        : {}),
       // Mark provider as host-managed so CLI settings.json env cannot
       // override the server's CLI args.
       CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',

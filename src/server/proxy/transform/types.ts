@@ -36,6 +36,9 @@ export type OpenAITool = {
   }
 }
 
+export type OpenAIReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh'
+export type AnthropicReasoningEffort = 'low' | 'medium' | 'high' | 'max'
+
 export type OpenAIChatRequest = {
   model: string
   messages: OpenAIChatMessage[]
@@ -47,7 +50,7 @@ export type OpenAIChatRequest = {
   stream?: boolean
   tools?: OpenAITool[]
   tool_choice?: unknown
-  reasoning_effort?: 'low' | 'medium' | 'high'
+  reasoning_effort?: OpenAIReasoningEffort
 }
 
 export type OpenAIChatResponse = {
@@ -116,7 +119,7 @@ export type OpenAIResponsesRequest = {
   stream?: boolean
   tools?: OpenAITool[]
   tool_choice?: unknown
-  reasoning?: { effort?: 'low' | 'medium' | 'high' }
+  reasoning?: { effort?: OpenAIReasoningEffort }
 }
 
 export type OpenAIResponsesOutputItem =
@@ -171,6 +174,10 @@ export type AnthropicRequest = {
   thinking?: {
     type: string
     budget_tokens?: number
+  }
+  output_config?: {
+    effort?: AnthropicReasoningEffort
+    [key: string]: unknown
   }
 }
 

@@ -139,6 +139,18 @@ describe('anthropicToOpenaiChat', () => {
     expect(anthropicToOpenaiChat(highReq).reasoning_effort).toBe('high')
   })
 
+  test('output_config effort overrides thinking budget', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      thinking: { type: 'enabled', budget_tokens: 512 },
+      output_config: { effort: 'max' },
+    }
+
+    expect(anthropicToOpenaiChat(req).reasoning_effort).toBe('xhigh')
+  })
+
   test('assistant message with tool_use', () => {
     const req: AnthropicRequest = {
       model: 'gpt-4',
@@ -357,6 +369,18 @@ describe('anthropicToOpenaiResponses', () => {
     }
     const result = anthropicToOpenaiResponses(req)
     expect(result.reasoning).toEqual({ effort: 'high' })
+  })
+
+  test('output_config effort overrides thinking budget', () => {
+    const req: AnthropicRequest = {
+      model: 'gpt-4o',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'Hi' }],
+      thinking: { type: 'enabled', budget_tokens: 512 },
+      output_config: { effort: 'max' },
+    }
+
+    expect(anthropicToOpenaiResponses(req).reasoning).toEqual({ effort: 'xhigh' })
   })
 
   test('stop_sequences dropped', () => {

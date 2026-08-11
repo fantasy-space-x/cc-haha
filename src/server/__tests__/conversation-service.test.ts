@@ -14,6 +14,7 @@ describe('ConversationService', () => {
   let originalEntrypoint: string | undefined
   let originalOAuthToken: string | undefined
   let originalProviderManagedByHost: string | undefined
+  let originalAlwaysEnableEffort: string | undefined
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'cc-haha-conversation-service-'))
@@ -24,6 +25,7 @@ describe('ConversationService', () => {
     originalEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT
     originalOAuthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN
     originalProviderManagedByHost = process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    originalAlwaysEnableEffort = process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
 
     process.env.CLAUDE_CONFIG_DIR = tmpDir
     process.env.ANTHROPIC_AUTH_TOKEN = 'test-token'
@@ -34,6 +36,7 @@ describe('ConversationService', () => {
     // buildChildEnv injects it or not without interference from the shell env.
     delete process.env.CLAUDE_CODE_ENTRYPOINT
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+    delete process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
   })
 
   afterEach(async () => {
@@ -58,6 +61,9 @@ describe('ConversationService', () => {
     if (originalProviderManagedByHost === undefined) delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
     else process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = originalProviderManagedByHost
 
+    if (originalAlwaysEnableEffort === undefined) delete process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
+    else process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = originalAlwaysEnableEffort
+
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -68,6 +74,17 @@ describe('ConversationService', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('test-token')
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid/anthropic')
     expect(env.ANTHROPIC_MODEL).toBe('test-model')
+  })
+
+  test('forces effort capability for an explicit server runtime effort', async () => {
+    const service = new ConversationService() as any
+    const env = (await service.buildChildEnv(
+      'D:\\workspace\\code\\myself_code\\cc-haha',
+      undefined,
+      { effort: 'max' },
+    )) as Record<string, string>
+
+    expect(env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT).toBe('1')
   })
 
   test('strips inherited provider env when desktop provider config exists', async () => {
